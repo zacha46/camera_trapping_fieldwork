@@ -30,3 +30,13 @@ The bait/lure values match the WildObs image platform's list. Coordinate uncerta
 and `cameraDepth` are deliberately left out: the first comes from the GPS fix, the
 second applies only to underwater cameras. Campaign-specific variants (for example a
 drop-down of grid point IDs instead of free text) live in that campaign's folder.
+
+## EpiCollect rules that are easy to break when editing the JSON by hand
+
+- **Location, photo, audio and video questions cannot be required.** The formbuilder
+  rejects the whole form ("form is invalid", no detail). The GPS fix therefore has to
+  be checked in the field.
+- Integer, decimal and radio questions need `"default": ""`, not `null` (the server
+  rejects `null`).
+- Input refs are 60 characters (`<32-char project>_<13-char form>_<13-char input>`) and
+  answer refs exactly 13 letters or digits, all unique.
