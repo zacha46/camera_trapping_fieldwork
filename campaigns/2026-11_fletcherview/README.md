@@ -122,5 +122,27 @@ the v1 CSV automatically once that file is placed in `data/raw/`.
 
 ## Design notes from the v1 chat session
 
-<!-- Paste the contents of the claude.ai project doc
-     fletcherview-2026-11/design-notes-v1.md here. -->
+### Targets
+- camDB: >10 deployments, >100 trap-nights, >10 species; sampled area (MCP/bbox) target 50 km² is a soft suggestion — 15 km² is the analysis minimum and is the working target (property is ~2,400 ha = 24 km², so 50 km² is not achievable on-property).
+- Project outcome: grazing pressure (cattle, macropods, other grazers), linked to flux tower and acoustic (A2O) data.
+
+### Design decisions
+- Systematic 800 m grid aligned on the flux tower (-19.887232, 146.188908), clipped to the property (100 m inward buffer).
+- Cameras placed at the best tree within ~100 m of each grid point; strapped to trees, heights vary (cattle rubbing); deployment metadata (height, angle, feature) recorded as detection covariates.
+- Motion trigger only (cameras can't do time-lapse simultaneously). No locks (property secure). ~3-month deployment; retrieval possibly by station maintenance crew.
+- Max 30 cameras (luggage).
+
+### Wind / flux footprint
+- OzFlux L3 2023–2025 (sonic Wd, QC flag 0, Ws > 0.5 m/s). Nov–Feb daytime: circular mean ~64° (ENE); ~69% of half-hours from NNE–ESE (10–125°); <5% from SW–W. Confirmed by a colleague's higher-resolution map.
+- Tower 25 m, canopy 12 m. Footprint likely mostly within a few hundred m to ~1 km upwind (rule of thumb, not modelled).
+- "Footprint" points = within 2 km of tower and bearing 10–125° (plus tower point).
+
+### v1 grid (boundary APPROXIMATE — traced from screenshot, scaled to 2,400 ha)
+- 34 nodes: 7 footprint, 20 core, 2 drop_first (FV03, FV14 — interior, downwind, MCP unchanged), 5 reserve (checkerboard-thinned downwind west block).
+- Planned 29 points → MCP ~19.5 km²; 27 points (dropping FV03, FV14) → MCP still ~19.5 km².
+- FV04, FV12, FV21, FV01 are near the Burdekin channel — check access/flooding.
+- To do: replace approximate boundary with QLD cadastre parcel (Queensland Globe → Property layer → click parcel for Lot on Plan; or Cadastral data – Queensland series, filter by lot/plan) and regenerate.
+
+### Field data workflow
+- EpiCollect form for camera metadata (simple method). QField (free, iOS) as navigation map: QTopo 1:25k GeoPDF (sheet 8158-33 et al.) + design GeoPackage/KML; drop a point named with the deployment ID and join to EpiCollect by ID in R.
+- Avenza free tier limit hit; KoboToolbox not a map tool on iPhone.
