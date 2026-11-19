@@ -3,10 +3,10 @@
 #' @description Labels each node from `make_grid_design()` with a field status.
 #'   Rules apply in this order, and the first that matches wins:
 #'   \enumerate{
-#'     \item `footprint`: the origin node itself, plus any node within
-#'       `footprint_max_dist` whose bearing lies inside `footprint_bearing` (both
-#'       ends inclusive). These sit in the tower's upwind source area and are always
-#'       planned, whatever other rule they also meet.
+#'     \item `footprint`: the origin node itself, plus any node inside
+#'       `footprint_zone` (e.g. the zone from `make_footprint_zone()`). These sit in
+#'       or around the tower's upwind source area and are always planned, whatever
+#'       other rule they also meet.
 #'     \item `backup`: a node that meets any backup rule: (a) beyond `thin_min_dist`
 #'       inside `thin_bearing` with an odd `grid_i + grid_j`, i.e. every other node of
 #'       a block thinned to a checkerboard; (b) at a grid offset in `backup_offsets`;
@@ -17,8 +17,7 @@
 #'   A `backup_reason` column lists every backup rule a node meets. Offsets rather
 #'   than point IDs pick out hand-chosen nodes, so the choice survives renumbering.
 #' @param points sf. Output of `make_grid_design()`.
-#' @param footprint_max_dist numeric. Outer radius of the footprint wedge, metres.
-#' @param footprint_bearing numeric, length 2. Bearing range (min, max) of the wedge.
+#' @param footprint_zone sf or sfc polygon, same CRS as `points`.
 #' @param thin_min_dist numeric. Nodes must be farther than this to be thinned.
 #' @param thin_bearing numeric, length 2. Bearing range (min, max) of the thinned block.
 #' @param thin_reason character. Reason recorded for thinned nodes.
@@ -30,8 +29,7 @@
 #'   wrong length.
 #' @author Zachary Amir
 classify_points <- function(points,
-                            footprint_max_dist,
-                            footprint_bearing,
+                            footprint_zone,
                             thin_min_dist,
                             thin_bearing,
                             thin_reason = "checkerboard thinning",
@@ -44,11 +42,9 @@ classify_points <- function(points,
          "Build the points with make_grid_design().")
   } # end column check
 
-  ## rule 1: the tower node and the upwind wedge
+  ## rule 1: the tower node, and every node inside the footprint zone
   is_footprint <- points$dist_m == 0 |
-    (points$dist_m <= footprint_max_dist &
-       points$bearing >= footprint_bearing[1] &
-       points$bearing <= footprint_bearing[2])
+    lengths(sf::st_intersects(points, sf::st_union(sf::st_geometry(footprint_zone)))) > 0
 
   ## rule 2: collect every backup reason that applies to each node
   # start with no reasons recorded for any node

@@ -9,7 +9,7 @@ than one campaign needs live in `R/`.
 
 | Campaign | Site | Status |
 |---|---|---|
-| [`2026-11_fletcherview`](campaigns/2026-11_fletcherview/README.md) | TERN Fletcherview Tropical Rangeland SuperSite, QLD | design v1 reproduced |
+| [`2026-11_fletcherview`](campaigns/2026-11_fletcherview/README.md) | TERN Fletcherview Tropical Rangeland SuperSite, QLD | design v4; QField field map built |
 
 ## Getting started
 

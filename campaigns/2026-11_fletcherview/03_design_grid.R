@@ -7,7 +7,8 @@
 ##   main      -- the rest of the grid that is always deployed
 ##   backup    -- ranked 1, 2, 3, ...; filled in order with the cameras left over
 ## Backups are the far downwind block thinned to a checkerboard, two interior
-## downwind nodes, and every node near a mapped river or creek channel (wet season).
+## downwind nodes, and every site near a mapped river or creek channel (wet season).
+## Each site is drawn with a 100 m placement circle for choosing the camera tree.
 ##
 ## There is no cadastral boundary, so the property outline is traced by hand from a
 ## satellite screenshot and scaled to the station's known 2,400 ha. Treat it as
@@ -28,6 +29,7 @@ library(here)      # For project-relative paths so this runs on any machine
 ## Load the shared helpers this script uses
 source(here("R", "pixel_to_map.R"))
 source(here("R", "make_grid_design.R"))
+source(here("R", "make_footprint_zone.R"))
 source(here("R", "classify_points.R"))
 source(here("R", "relocate_away_from_water.R"))
 source(here("R", "rank_backup_sites.R"))
@@ -41,7 +43,7 @@ source(here("R", "write_qgis_project.R"))
 ### Set the knobs for this design ----
 
 ## design version stamped on every output file
-design_version <- "v3"
+design_version <- "v4"
 # where this campaign lives
 campaign_dir <- here("campaigns", "2026-11_fletcherview")
 # all distances and areas are worked in WGS 84 / UTM zone 55S
@@ -59,15 +61,21 @@ property_area_ha <- 2400
 
 ## grid layout
 grid_spacing_m <- 800 # metres between neighbouring nodes
-boundary_inset_m <- 100 # cameras go on the best tree within ~100 m of a node
+## cameras go on the best tree within this distance of a site; the map draws a circle
+## this size around each site, and the grid keeps this far inside the boundary
+placement_radius_m <- 100
+boundary_inset_m <- placement_radius_m
 point_prefix <- "FV" # point IDs FV01, FV02, ...
 
 ## cameras available (luggage limit); whatever the planned sites leave goes to backups
 camera_cap <- 30
 
-## footprint: within 2 km of the tower, in the upwind arc from 01_wind_footprint.R
+## footprint: within 2 km of the tower, in the upwind arc from 01_wind_footprint.R,
+## widened all round because the wind sometimes blows from elsewhere and the
+## leeward side near the tower is monitored too (ZDA, 2026-11-19)
 footprint_max_dist_m <- 2000
 footprint_bearing <- c(10, 125)
+footprint_buffer_m <- 200
 
 ### Which nodes are backups?
 ## (1) the far downwind (western) block, every other node as a checkerboard
@@ -76,13 +84,16 @@ thin_bearing <- c(170, 330)
 ## (2) two interior downwind nodes whose loss leaves the MCP unchanged (FV03, FV14)
 backup_offsets <- data.frame(grid_i = c(-3, -3), grid_j = c(3, 1),
                              reason = "interior downwind, MCP unchanged")
-## (3) wet season: any node within this distance of a mapped river or creek channel
-water_buffer_m <- 500
-## "mapped channel" = the Queensland Government watercourse-area polygons (ZDA, 2026-11-19)
+### (3) wet season: any site this close to a mapped channel (ZDA, 2026-11-19)
+## "mapped channel" = the Queensland Government watercourse-area polygons
 water_layers <- c("watercourse_area")
+major_river_name <- "Burdekin River"
+water_buffer_major_m <- 250 # from the Burdekin River channel
+water_buffer_minor_m <- 150 # from every other mapped creek channel
 
 ### Which camera sites move back from the river, and how far may they go?
-## FV04 sits on the Burdekin bank; it moves to the driest spot within this radius
+## FV04 sits on the Burdekin bank; it moves to the driest spot within this radius,
+## and the water rule is then judged where the camera actually goes
 relocate_offsets <- data.frame(grid_i = 2, grid_j = 3)
 relocate_max_m <- 300
 ### Which backup goes last whatever its coverage gain?
@@ -170,16 +181,21 @@ water_channels <- st_read(hydro_path, quiet = TRUE) |>
   # keep the chosen layers only
   filter(layer %in% water_layers) |>
   # into UTM for distances
-  st_transform(crs_utm)
+  st_transform(crs_utm) |>
+  # the buffer each channel gets: wider for the main river
+  mutate(buffer_m = ifelse(!is.na(name) & name == major_river_name,
+                           water_buffer_major_m, water_buffer_minor_m))
 
-## the zone within the buffer distance of any channel, as one shape
+## the zone too close to any channel, as one shape
 water_buffer <- water_channels |>
-  # widen each channel by the buffer distance
-  st_buffer(water_buffer_m) |>
+  # widen each channel by its own buffer distance
+  st_buffer(water_channels$buffer_m) |>
   # and merge them
   st_union() |>
   # as an sf layer with a label
-  st_sf(name = sprintf("within %d m of a mapped channel", water_buffer_m), geometry = _)
+  st_sf(name = sprintf("within %d m of the %s or %d m of a creek channel",
+                       water_buffer_major_m, major_river_name, water_buffer_minor_m),
+        geometry = _)
 
 
 #
@@ -195,22 +211,6 @@ id_at <- function(offsets) {
   points$point_id[match(paste(offsets$grid_i, offsets$grid_j), paste(points$grid_i, points$grid_j))]
 } # end lookup
 
-## flag nodes within the buffer distance of a mapped channel
-near_water <- lengths(st_is_within_distance(points, water_channels, water_buffer_m)) > 0
-# the same, as the reason recorded against each node
-water_reason <- sprintf("within %d m of a mapped river or creek channel", water_buffer_m)
-
-## label each node footprint, main or backup
-points <- classify_points(points,
-                          footprint_max_dist = footprint_max_dist_m,
-                          footprint_bearing = footprint_bearing,
-                          thin_min_dist = thin_min_dist_m,
-                          thin_bearing = thin_bearing,
-                          thin_reason = "far downwind block, checkerboard thinning",
-                          backup_offsets = backup_offsets,
-                          backup_flags = setNames(list(near_water), water_reason))
-# keep the water flag itself, since footprint nodes can be near water too
-points$near_water <- near_water
 # distance from each grid node to the nearest channel, before any moves
 points$water_dist_node_m <- as.numeric(st_distance(points, st_union(water_channels)))
 
@@ -218,6 +218,30 @@ points$water_dist_node_m <- as.numeric(st_distance(points, st_union(water_channe
 points <- relocate_away_from_water(points, ids = id_at(relocate_offsets),
                                    water = water_channels, max_move = relocate_max_m,
                                    allowed_area = boundary_inner, origin = tower_utm)
+
+## flag sites inside the water zone, judged where the camera goes
+near_water <- lengths(st_intersects(points, water_buffer)) > 0
+# the same, as the reason recorded against each site
+water_reason <- sprintf("within %d m of the %s or %d m of a creek channel",
+                        water_buffer_major_m, major_river_name, water_buffer_minor_m)
+
+## the footprint wedge and the wider zone that decides footprint sites
+footprint_shapes <- make_footprint_zone(tower_utm, max_dist = footprint_max_dist_m,
+                                        bearing = footprint_bearing, buffer = footprint_buffer_m,
+                                        crs = crs_utm)
+footprint_wedge <- filter(footprint_shapes, part == "wedge")
+footprint_zone <- filter(footprint_shapes, part == "zone")
+
+## label each site footprint, main or backup
+points <- classify_points(points,
+                          footprint_zone = footprint_zone,
+                          thin_min_dist = thin_min_dist_m,
+                          thin_bearing = thin_bearing,
+                          thin_reason = "far downwind block, checkerboard thinning",
+                          backup_offsets = backup_offsets,
+                          backup_flags = setNames(list(near_water), water_reason))
+# keep the water flag itself, since footprint sites can be near water too
+points$near_water <- near_water
 
 ## rank the backups: dry sites first, then near-water sites, each by coverage gained,
 ## with the named sites last
@@ -251,19 +275,12 @@ rank_reaching_target <- min(points$backup_rank[!is.na(points$mcp_after_km2) &
 ## every site
 mcp_all_km2 <- as.numeric(st_area(st_convex_hull(st_union(points)))) / 1e6
 
-## the footprint wedge as a polygon, built in map coordinates so north is up
-# bearings along the arc, one per degree
-arc <- seq(footprint_bearing[1], footprint_bearing[2], by = 1) * pi / 180
-wedge_xy <- cbind(
-  # start at the tower, sweep the arc clockwise, return to the tower
-  c(tower_utm[1], tower_utm[1] + footprint_max_dist_m * sin(arc), tower_utm[1]),
-  c(tower_utm[2], tower_utm[2] + footprint_max_dist_m * cos(arc), tower_utm[2])
-) # end wedge coordinates
-footprint_wedge <- st_sf(
-  name = sprintf("flux footprint: %g-%g deg within %g km", footprint_bearing[1],
-                 footprint_bearing[2], footprint_max_dist_m / 1000),
-  geometry = st_sfc(st_polygon(list(wedge_xy)), crs = crs_utm)
-) # end wedge
+## a placement circle around every site, for choosing the camera tree in the field
+placement_zones <- points |>
+  # the columns the field map needs
+  select(point_id, status, backup_rank, map_label) |>
+  # a circle of the placement radius
+  st_buffer(placement_radius_m)
 
 ## the tower as its own layer
 flux_tower <- st_sf(
@@ -328,8 +345,10 @@ gpkg_layers <- list(
   planned_points = points_out,
   flux_tower = st_transform(flux_tower, 4326),
   boundary_approx = st_transform(boundary, 4326),
-  footprint_wedge = st_transform(footprint_wedge, 4326),
-  water_channels = st_transform(select(water_channels, name, perenniality, hierarchy), 4326),
+  placement_zones = st_transform(placement_zones, 4326),
+  footprint_wedge = st_transform(select(footprint_wedge, name), 4326),
+  footprint_zone = st_transform(select(footprint_zone, name), 4326),
+  water_channels = st_transform(select(water_channels, name, perenniality, hierarchy, buffer_m), 4326),
   water_buffer = st_transform(water_buffer, 4326),
   deployments = deployments
 ) # end layer list
@@ -359,10 +378,24 @@ status_style <- list(
     fill = unname(status_colours),
     outline = "#000000",
     shape = "circle",
-    size = 4,
-    outline_width = 0.4
+    # a dot fixed at 25 m across on the ground, so it never swamps the circle
+    size = 25,
+    size_unit = "MapUnit",
+    outline_width = 0.3
   ) # end categories
 ) # end status style
+# the placement circles, lightly filled in the status colour
+zone_style <- list(
+  kind = "categorized", attr = "status", geom = "fill",
+  categories = data.frame(
+    value = names(status_colours),
+    label = sprintf("%s: %d m placement circle", names(status_colours), placement_radius_m),
+    fill = unname(status_colours),
+    alpha = 70,
+    outline = unname(status_colours),
+    outline_width = 0.6
+  ) # end categories
+) # end zone style
 
 qgis_layers <- list(
   # where cameras actually went: editable, with a drop-down for point_id and an automatic timestamp
@@ -379,15 +412,24 @@ qgis_layers <- list(
   # camera sites, coloured by status and labelled with ID and backup rank
   qgis_layer_xml("planned_points", "Camera sites", src("planned_points"), crs_ll,
                  status_style, label_field = "map_label"),
+  # the placement circle around each site, fixed in metres
+  qgis_layer_xml("placement_zones", sprintf("Placement circles (%d m)", placement_radius_m),
+                 src("placement_zones"), crs_ll, zone_style, geometry = "Polygon"),
   # the approximate property boundary, outline only
   qgis_layer_xml("boundary_approx", "Property boundary (approximate)", src("boundary_approx"), crs_ll,
                  list(kind = "single", geom = "fill", fill = NULL, outline = boundary_colour,
                       outline_style = "dash", outline_width = 0.7),
                  geometry = "Polygon"),
-  # the flux footprint wedge, lightly shaded
-  qgis_layer_xml("footprint_wedge", "Flux footprint wedge", src("footprint_wedge"), crs_ll,
-                 list(kind = "single", geom = "fill", fill = status_colours[["footprint"]], alpha = 45,
+  # the wind wedge, as an outline
+  qgis_layer_xml("footprint_wedge", "Flux footprint wedge (wind)", src("footprint_wedge"), crs_ll,
+                 list(kind = "single", geom = "fill", fill = NULL,
                       outline = status_colours[["footprint"]], outline_style = "dash", outline_width = 0.5),
+                 geometry = "Polygon"),
+  # the wider footprint zone, lightly shaded
+  qgis_layer_xml("footprint_zone", sprintf("Flux footprint zone (wedge + %d m)", footprint_buffer_m),
+                 src("footprint_zone"), crs_ll,
+                 list(kind = "single", geom = "fill", fill = status_colours[["footprint"]], alpha = 40,
+                      outline = status_colours[["footprint"]], outline_width = 0.3),
                  geometry = "Polygon"),
   # mapped channels
   qgis_layer_xml("water_channels", "Mapped river/creek channels", src("water_channels"), crs_ll,
@@ -395,7 +437,8 @@ qgis_layers <- list(
                       outline = water_colour, outline_width = 0.3),
                  geometry = "Polygon"),
   # the wet-season buffer around them
-  qgis_layer_xml("water_buffer", sprintf("Within %d m of a channel", water_buffer_m), src("water_buffer"),
+  qgis_layer_xml("water_buffer", sprintf("Wet-season zone (%d m Burdekin, %d m creeks)",
+                                       water_buffer_major_m, water_buffer_minor_m), src("water_buffer"),
                  crs_ll,
                  list(kind = "single", geom = "fill", fill = water_colour, alpha = 35,
                       outline = water_colour, outline_style = "dot", outline_width = 0.4),
@@ -465,10 +508,12 @@ moved_df <- filter(pts_df, moved_m > 0)
 
 ## names for the map-layer legend, in the order they should be listed
 layer_labels <- c(boundary = "Property boundary (approximate)",
-                  wedge = sprintf("Flux footprint (%g-%g°, %g km)", footprint_bearing[1],
+                  wedge = sprintf("Wind wedge (%g-%g°, %g km)", footprint_bearing[1],
                                   footprint_bearing[2], footprint_max_dist_m / 1000),
+                  zone = sprintf("Flux footprint zone (wedge + %d m)", footprint_buffer_m),
                   channel = "Mapped river/creek channel",
-                  buffer = sprintf("Within %d m of a channel", water_buffer_m))
+                  buffer = sprintf("Wet-season zone (%d m Burdekin, %d m creeks)",
+                                   water_buffer_major_m, water_buffer_minor_m))
 ## names for the marker legend
 marker_labels <- c(tower = "Flux tower (AU-Fle)", node = "Grid node (camera moved off it)")
 
@@ -487,9 +532,12 @@ p <- ggplot() +
   # the mapped channels
   geom_sf(data = water_channels, aes(colour = layer_labels[["channel"]]),
           fill = water_colour, alpha = 0.45, linewidth = 0.2) +
-  # the footprint wedge
+  # the footprint zone, shaded
+  geom_sf(data = footprint_zone, aes(colour = layer_labels[["zone"]]),
+          fill = status_colours[["footprint"]], alpha = 0.15, linewidth = 0.3) +
+  # the wind wedge inside it, as a dashed outline
   geom_sf(data = footprint_wedge, aes(colour = layer_labels[["wedge"]]),
-          fill = status_colours[["footprint"]], alpha = 0.18, linewidth = 0.5, linetype = "dashed") +
+          fill = NA, linewidth = 0.5, linetype = "dashed") +
   # the approximate boundary
   geom_sf(data = boundary, aes(colour = layer_labels[["boundary"]]),
           fill = NA, linewidth = 0.7, linetype = "longdash") +
@@ -499,9 +547,11 @@ p <- ggplot() +
   # and the grid node itself as a hollow circle
   geom_point(data = moved_df, aes(node_x, node_y, shape = marker_labels[["node"]]),
              size = 2.6, stroke = 0.6) +
-  # every camera site, filled by status
-  geom_point(data = pts_df, aes(x, y, fill = status), shape = 21, size = 3.2,
-             colour = "black", stroke = 0.4) +
+  # the placement circle around every site, filled by status
+  geom_sf(data = mutate(placement_zones, status = factor(status, levels = names(status_colours))),
+          aes(fill = status), colour = "black", linewidth = 0.25, alpha = 0.75) +
+  # and the site itself as a small dot at its centre
+  geom_point(data = pts_df, aes(x, y), size = 0.5) +
   # labels: ID, plus rank for backups, with a white halo for legibility
   geom_label(data = pts_df, aes(x, y, label = map_label), size = 2.3, nudge_y = 170,
              linewidth = 0, label.padding = unit(0.08, "lines"), fill = "white", alpha = 0.8) +
@@ -512,17 +562,19 @@ p <- ggplot() +
   scale_fill_manual(values = status_colours, limits = names(status_colours),
                     labels = c("footprint (always deploy)", "main (always deploy)",
                                "backup, ranked B1, B2, ... (fill in order)"),
-                    name = "Camera site", guide = guide_legend(order = 1)) +
+                    name = sprintf("Camera site (%d m placement circle)", placement_radius_m),
+                    guide = guide_legend(order = 1)) +
   ## map layer legend; every layer draws a key for every entry, so all their looks are set here
   scale_colour_manual(
-    values = setNames(c(boundary_colour, status_colours[["footprint"]], water_colour, water_colour),
+    values = setNames(c(boundary_colour, status_colours[["footprint"]], status_colours[["footprint"]],
+                        water_colour, water_colour),
                       layer_labels),
     limits = unname(layer_labels), name = "Map layers",
     guide = guide_legend(order = 2, override.aes = list(
-      fill = c(NA, status_colours[["footprint"]], water_colour, water_colour),
-      alpha = c(1, 0.18, 0.45, 0.15),
-      linetype = c("longdash", "dashed", "solid", "dotted"),
-      linewidth = c(0.7, 0.5, 0.2, 0.3)))) +
+      fill = c(NA, NA, status_colours[["footprint"]], water_colour, water_colour),
+      alpha = c(1, 1, 0.15, 0.45, 0.15),
+      linetype = c("longdash", "dashed", "solid", "solid", "dotted"),
+      linewidth = c(0.7, 0.5, 0.3, 0.2, 0.3)))) +
   ## marker legend; both marker layers draw both keys, so their looks are set here too
   scale_shape_manual(values = setNames(c(24, 1), marker_labels), limits = unname(marker_labels),
                      name = NULL,

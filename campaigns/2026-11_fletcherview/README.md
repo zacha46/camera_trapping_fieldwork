@@ -12,7 +12,7 @@ the scripts record how. Every derived number lives in the summary tables the scr
 write, not in this file:
 
 - `outputs/wind_summary_v1.csv` — wind record size, circular means, sector shares
-- `outputs/design_summary_v3.csv` — scale, site counts by status, cameras for
+- `outputs/design_summary_v4.csv` — scale, site counts by status, cameras for
   backups, MCP areas against the target, the FV04 move, extents (earlier designs have
   their own `design_summary_vN.csv`)
 
@@ -37,12 +37,12 @@ Coordinate-bearing outputs (the QField folder, KML, points CSV, preview) are wri
 
 ## Field map in QField
 
-`outputs/qfield_v3/` is a self-contained QField project:
+`outputs/qfield_v4/` is a self-contained QField project:
 
 | File | Contents |
 |---|---|
-| `fletcherview_v3.qgs` | the project: layer order, symbols, labels, opening view |
-| `fletcherview_design_v3.gpkg` | camera sites, flux tower, approximate boundary, footprint wedge, mapped channels, 500 m water zone, and an empty `deployments` layer |
+| `fletcherview_v4.qgs` | the project: layer order, symbols, labels, opening view |
+| `fletcherview_design_v4.gpkg` | camera sites and their 100 m placement circles, flux tower, approximate boundary, wind wedge and footprint zone, mapped channels, wet-season zone, and an empty `deployments` layer |
 | `qtopo_basemap.tif` | QTopo 1:25k basemap (sheets 8158-31 and -32), 3 m pixels, works offline |
 
 Copy the whole folder to the phone (on iOS, into QField's folder via the Files app) and
@@ -56,7 +56,11 @@ take the cameras that are left and work down the backup list, B1 first; if a bac
 site cannot be reached, skip it and go to the next. Backups carry their rank on the map
 label (e.g. "FV13 (B1)") and in the points CSV, which lists them in rank order.
 
-## Design v3
+**Placement circles.** Each site is drawn with a 100 m radius circle, sized in metres
+on the ground, so it stays the same real size at every zoom. Put the camera on the
+best tree inside the circle; the site dot marks the grid node at its centre.
+
+## Design v4
 
 ### Step 1: where the tower looks (`01_wind_footprint.R`)
 
@@ -107,8 +111,8 @@ matches wins.
 
 | Status | Rule | In the field |
 |---|---|---|
-| `footprint` | the tower node, or within 2,000 m at a bearing of 10–125° | always deploy, even near water |
-| `backup` | any of: within 500 m of a mapped channel; every other node (odd `i + j`) beyond 1,600 m at a bearing of 170–330° (the far downwind block, checkerboard-thinned); grid offsets (i = −3, j = 3) and (i = −3, j = 1), two interior downwind nodes | fill in rank order with the cameras left after footprint and main |
+| `footprint` | inside the footprint zone: the wind wedge (within 2,000 m at a bearing of 10–125°) widened by 200 m all round | always deploy, even near water |
+| `backup` | any of: within 250 m of the Burdekin River channel or 150 m of any other mapped creek channel, judged where the camera goes; every other node (odd `i + j`) beyond 1,600 m at a bearing of 170–330° (the far downwind block, checkerboard-thinned); grid offsets (i = −3, j = 3) and (i = −3, j = 1), two interior downwind nodes | fill in rank order with the cameras left after footprint and main |
 | `main` | everything else | always deploy |
 
 `i` and `j` are the grid column and row offsets from the tower (east and north
@@ -129,9 +133,11 @@ coverage passes the 15 km² target.
 **Moved site.** FV04 sat on the bank of the Burdekin. Its camera goes to the spot
 farthest from any mapped channel within 300 m of its grid node and inside the inset
 boundary (the distances before and after are in the design summary). The grid node
-stays its reference; the preview draws an arrow from the node to the new spot.
+stays its reference; the preview draws an arrow from the node to the new spot. The
+water rule is applied at the new spot, so FV04 is now a main site.
 
-**Outputs.** The QField folder above; a KML with the boundary, sites in one folder per
+**Outputs.** The QField folder above, with site markers and placement circles sized
+in metres; a KML with the boundary, sites in one folder per
 status, and the flux tower; a points CSV with backups in rank order; and a preview over
 the QTopo basemap with legends for camera status, every map layer and the markers.
 
@@ -189,17 +195,28 @@ there. Moving FV01 to the nearest spot at least 500 m from any channel would pla
 1.4 km away and beside FV05, gaining no coverage. FV01 therefore stays at its node and
 is ranked last among the backups.
 
+**2026-11-19 — v4: narrower water rule, wider footprint, fixed-size sites (ZDA, after
+loading v2 and v3 in QField).** The 500 m water buffer was too generous: it is now
+250 m from the Burdekin River channel and 150 m from every other mapped creek channel.
+The footprint now includes a 200 m strip around the wind wedge, because the wind
+sometimes blows from other directions and the leeward side near the tower is
+monitored too; this adds FV17 and FV32. Site markers in QField were drawn in screen
+millimetres, so they changed ground size with every zoom; each site now has a 100 m
+placement circle sized in metres. The backup ranking rules are unchanged (ZDA liked
+the v3 ordering). Water is now judged at the camera's final position, which makes the
+moved FV04 a main site. Counts, the camera budget and coverage are in
+`design_summary_v4.csv`.
+
 ## Open questions
 
-- **FV02 and FV03 are in the deployed backups but at the water's edge.** Ranked by
-  coverage, FV02 (B5, about 60 m from a channel) and FV03 (B11, inside the mapped
-  Burdekin channel on QTopo) both fall within the cameras available. Should they get
-  the same treatment as FV04 (move to the driest spot within 300 m), or drop down the
-  list?
+- **FV03 gets a camera but sits inside the Burdekin channel.** Ranked by coverage,
+  FV03 is backup B6, within the cameras available, although QTopo maps it inside the
+  river channel. FV02 (B5) is about 60 m from a creek channel. Options: rank FV03 last
+  like FV01, move it like FV04, or leave it.
 - **Boundary accuracy.** Over QTopo, the traced north boundary runs inside the Burdekin
   channel, where the screenshot trace followed the south bank, so the trace is out by
-  roughly 100–200 m there. The fix is still the cadastral parcel (see the to-do in the
-  design notes); it would also settle where FV01 can go.
+  roughly 100–200 m there. A cadastral parcel (ZDA is obtaining a shapefile) will
+  replace it and settle where FV01 and FV03 can go.
 
 ## Design notes from the v1 chat session
 

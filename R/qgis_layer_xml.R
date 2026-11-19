@@ -4,13 +4,17 @@
 #'   draw one layer: where the data are, their CRS, and how to draw them. Three
 #'   styles are supported, chosen by `style$kind`:
 #'   \enumerate{
-#'     \item `"categorized"`: points coloured by the value of one column, one marker
-#'       per value (`style$attr`, `style$categories`).
+#'     \item `"categorized"`: features coloured by the value of one column, one
+#'       symbol per value (`style$attr`, `style$categories`); markers by default, or
+#'       polygon fills with `style$geom = "fill"`.
 #'     \item `"single"`: every feature drawn alike, as a marker (`style$geom =
 #'       "marker"`) or a polygon fill (`style$geom = "fill"`).
 #'     \item `"raster"`: a three-band RGB image drawn as is.
 #'   }
 #'   Colours are hex strings (`"#RRGGBB"`) with an optional `alpha` (0-255).
+#'   Marker sizes are in millimetres on screen unless `size_unit = "MapUnit"`, which
+#'   sizes them in the project CRS's units (metres for UTM), so they keep their
+#'   ground size at every zoom.
 #'   Marker shapes use QGIS names such as `"circle"`, `"cross2"` (an X),
 #'   `"triangle"` or `"star"`. Outline styles are `"solid"`, `"dash"` or `"dot"`.
 #'   Only the elements needed to draw the layer are written; QGIS fills in its own
@@ -69,7 +73,9 @@ qgis_layer_xml <- function(id, name, source, crs, style, geometry = "Point",
                            collapse = "")
     # build each category's symbol from its row
     symbol_xml <- vapply(seq_len(nrow(cats)), function(k) {
-      qgis_symbol_xml(as.character(k - 1), as.list(cats[k, ]) |> c(geom = "marker"))
+      # markers unless the style asks for polygon fills
+      geom <- if (is.null(style$geom)) "marker" else style$geom
+      qgis_symbol_xml(as.character(k - 1), c(as.list(cats[k, ]), geom = geom))
     }, character(1))
     renderer <- paste0("<renderer-v2 type=\"categorizedSymbol\" attr=\"", style$attr,
                        "\" forceraster=\"0\" symbollevels=\"0\" enableorderby=\"0\">",
@@ -170,13 +176,14 @@ qgis_symbol_xml <- function(name, s) {
   outline <- if (is.null(s$outline)) "#000000" else s$outline
   outline_style <- if (is.null(s$outline_style)) "solid" else s$outline_style
   outline_width <- if (is.null(s$outline_width)) 0.4 else s$outline_width
+  size_unit <- if (is.null(s$size_unit)) "MM" else s$size_unit
   # each option is a typed key-value pair inside an Option map
   opt <- function(k, v) paste0("<Option type=\"QString\" name=\"", k, "\" value=\"", v, "\"/>")
 
   if (s$geom == "marker") {
     # a simple marker: shape, size and colours
     layer <- paste0("<layer class=\"SimpleMarker\" enabled=\"1\" locked=\"0\" pass=\"0\"><Option type=\"Map\">",
-                    opt("name", s$shape), opt("size", s$size), opt("size_unit", "MM"),
+                    opt("name", s$shape), opt("size", s$size), opt("size_unit", size_unit),
                     opt("color", qgis_colour(s$fill, alpha)),
                     opt("outline_color", qgis_colour(outline)),
                     opt("outline_style", outline_style),
@@ -185,8 +192,8 @@ qgis_symbol_xml <- function(name, s) {
     type <- "marker"
   } else {
     # a simple fill: optional fill colour and an outline
-    fill_style <- if (is.null(s$fill)) "no" else "solid"
-    fill_col <- if (is.null(s$fill)) "0,0,0,0" else qgis_colour(s$fill, alpha)
+    fill_style <- if (is.null(s$fill) || is.na(s$fill)) "no" else "solid"
+    fill_col <- if (fill_style == "no") "0,0,0,0" else qgis_colour(s$fill, alpha)
     layer <- paste0("<layer class=\"SimpleFill\" enabled=\"1\" locked=\"0\" pass=\"0\"><Option type=\"Map\">",
                     opt("style", fill_style), opt("color", fill_col),
                     opt("outline_color", qgis_colour(outline)),
