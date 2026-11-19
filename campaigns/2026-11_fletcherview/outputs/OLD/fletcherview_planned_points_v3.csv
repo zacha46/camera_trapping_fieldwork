@@ -1,0 +1,35 @@
+point_id,status,backup_rank,backup_reason,moved_m,dist_m,bearing,lat,lon
+FV10,footprint,,,0,1789,26.6,-19.8728092,146.1966225
+FV11,main,,,0,2263,45,-19.8728435,146.2042634
+FV16,main,,,0,1131,315,-19.8799683,146.1813035
+FV17,main,,,0,800,0,-19.8800033,146.1889448
+FV18,footprint,,,0,1131,45,-19.8800379,146.1965861
+FV19,footprint,,,0,1789,63.4,-19.8800722,146.2042273
+FV20,main,,,0,2530,71.6,-19.8801062,146.2118686
+FV22,main,,,0,3200,270,-19.887090100000002,146.1583417
+FV24,main,,,0,1600,270,-19.8871617,146.1736248
+FV25,main,,,0,800,270,-19.887197,146.1812664
+FV26,footprint,,,0,0,0,-19.887232,146.188908
+FV27,footprint,,,0,800,90,-19.8872666,146.1965496
+FV28,footprint,,,0,1600,90,-19.887301,146.2041912
+FV29,main,,,0,2400,90,-19.887335,146.2118329
+FV31,main,,,0,800,180,-19.8944607,146.1888712
+FV32,main,,,0,1131,135,-19.8944954,146.1965131
+FV33,footprint,,,0,1789,116.6,-19.8945297,146.2041551
+FV13,backup,1,"far downwind block, checkerboard thinning",0,3298,284,-19.8798615,146.1583799
+FV14,backup,2,"interior downwind, MCP unchanged",0,2530,288.4,-19.8798974,146.1660211
+FV23,backup,3,"far downwind block, checkerboard thinning",0,2400,270,-19.8871261,146.1659833
+FV15,backup,4,"far downwind block, checkerboard thinning",0,1789,296.6,-19.879933,146.1736623
+FV02,backup,5,"far downwind block, checkerboard thinning; within 500 m of a mapped river or creek channel",0,4000,306.9,-19.8654041,146.1584562
+FV04,backup,6,within 500 m of a mapped river or creek channel,297,2602,35.6,-19.8681863,146.2034748
+FV21,backup,7,within 500 m of a mapped river or creek channel,0,3298,76,-19.8801399,146.21951
+FV34,backup,8,within 500 m of a mapped river or creek channel,0,2530,108.4,-19.8945637,146.2117971
+FV30,backup,9,within 500 m of a mapped river or creek channel,0,1131,225,-19.8944257,146.1812292
+FV12,backup,10,within 500 m of a mapped river or creek channel,0,2884,56.3,-19.8728774,146.2119044
+FV03,backup,11,"interior downwind, MCP unchanged; within 500 m of a mapped river or creek channel",0,3394,315,-19.86544,146.1660967
+FV05,backup,12,within 500 m of a mapped river or creek channel,0,3578,296.6,-19.8726328,146.1584181
+FV09,backup,13,within 500 m of a mapped river or creek channel,0,1600,0,-19.8727746,146.1889816
+FV08,backup,14,within 500 m of a mapped river or creek channel,0,1789,333.4,-19.8727396,146.1813407
+FV06,backup,15,"far downwind block, checkerboard thinning; within 500 m of a mapped river or creek channel",0,2884,303.7,-19.8726687,146.1660589
+FV07,backup,16,within 500 m of a mapped river or creek channel,0,2263,315,-19.8727043,146.1736998
+FV01,backup,17,within 500 m of a mapped river or creek channel; ranked last: on the Burdekin bank; no drier spot on the property nearby,0,4525,315,-19.8581754,146.1584943
