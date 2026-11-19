@@ -66,6 +66,11 @@ R only. The approved set is `tidyverse`, `sf`, `terra`, `here`, `ncdf4` (or
 `tidync`), plus `renv`. **Ask before adding any other package**, even a small one.
 `renv.lock` records versions; run `renv::snapshot()` after an approved addition.
 
+One system dependency sits outside renv: reading QTopo GeoPDFs needs the command-line
+GDAL tools built with PDF support (macOS: `brew install gdal`), because the GDAL bundled
+with the CRAN builds of sf and terra cannot read PDFs. Only `build_qtopo_basemap()`
+calls them; everything downstream reads the GeoTIFF it writes.
+
 ## Public repo, sensitive coordinates
 
 This repository is public. Raw coordinates of sensitive species records never go
@@ -75,8 +80,8 @@ enforces the defaults:
 - `campaigns/*/data/raw/*` is ignored except its `README.md`, which says where each
   input comes from. Raw inputs are large (OzFlux netCDF, QTopo GeoPDFs) or not ours
   to redistribute (Google satellite screenshots).
-- Coordinate-bearing outputs (`*.gpkg`, `*.kml`, `*points*.csv`) and preview figures
-  drawn over imagery are ignored. Wind roses and summary tables are tracked.
+- Coordinate-bearing outputs (`*.gpkg`, `*.kml`, `*points*.csv`, `qfield_*/` project
+  folders) and preview figures drawn over imagery or basemaps are ignored. Wind roses and summary tables are tracked.
 - If a new output carries coordinates, name it so a rule already catches it, or add
   a rule, before the first run that writes it.
 - Never print species-record coordinates into a commit message, issue, PR or README.
