@@ -2,10 +2,12 @@
 ##
 ## Lays an 800 m square grid over Fletcherview with one node on the flux tower,
 ## keeps the nodes far enough inside the property for a camera to go on a nearby
-## tree, and labels each by priority: footprint (upwind of the tower, from
-## 01_wind_footprint.R), core, drop_first (planned, but the first to give up on the
-## day) and reserve (deploy only if cameras are spare). Nodes near mapped river
-## and creek channels are drop_first for the wet season.
+## tree, and sorts them for the field team:
+##   footprint -- upwind of the tower (from 01_wind_footprint.R); always deployed
+##   main      -- the rest of the grid that is always deployed
+##   backup    -- ranked 1, 2, 3, ...; filled in order with the cameras left over
+## Backups are the far downwind block thinned to a checkerboard, two interior
+## downwind nodes, and every node near a mapped river or creek channel (wet season).
 ##
 ## There is no cadastral boundary, so the property outline is traced by hand from a
 ## satellite screenshot and scaled to the station's known 2,400 ha. Treat it as
@@ -27,6 +29,8 @@ library(here)      # For project-relative paths so this runs on any machine
 source(here("R", "pixel_to_map.R"))
 source(here("R", "make_grid_design.R"))
 source(here("R", "classify_points.R"))
+source(here("R", "relocate_away_from_water.R"))
+source(here("R", "rank_backup_sites.R"))
 source(here("R", "write_kml_points.R"))
 source(here("R", "qgis_layer_xml.R"))
 source(here("R", "write_qgis_project.R"))
@@ -37,7 +41,7 @@ source(here("R", "write_qgis_project.R"))
 ### Set the knobs for this design ----
 
 ## design version stamped on every output file
-design_version <- "v2"
+design_version <- "v3"
 # where this campaign lives
 campaign_dir <- here("campaigns", "2026-11_fletcherview")
 # all distances and areas are worked in WGS 84 / UTM zone 55S
@@ -58,28 +62,40 @@ grid_spacing_m <- 800 # metres between neighbouring nodes
 boundary_inset_m <- 100 # cameras go on the best tree within ~100 m of a node
 point_prefix <- "FV" # point IDs FV01, FV02, ...
 
+## cameras available (luggage limit); whatever the planned sites leave goes to backups
+camera_cap <- 30
+
 ## footprint: within 2 km of the tower, in the upwind arc from 01_wind_footprint.R
 footprint_max_dist_m <- 2000
 footprint_bearing <- c(10, 125)
-## reserve: checkerboard-thin the far downwind (western) block
-reserve_min_dist_m <- 1600
-reserve_bearing <- c(170, 330)
 
-### Which core nodes are drop_first?
-## (1) two interior downwind nodes whose loss leaves the MCP unchanged (FV03, FV14)
-drop_first_offsets <- data.frame(grid_i = c(-3, -3), grid_j = c(3, 1),
-                                 reason = "interior downwind, MCP unchanged")
-## (2) wet season: any node within this distance of a mapped river or creek channel
+### Which nodes are backups?
+## (1) the far downwind (western) block, every other node as a checkerboard
+thin_min_dist_m <- 1600
+thin_bearing <- c(170, 330)
+## (2) two interior downwind nodes whose loss leaves the MCP unchanged (FV03, FV14)
+backup_offsets <- data.frame(grid_i = c(-3, -3), grid_j = c(3, 1),
+                             reason = "interior downwind, MCP unchanged")
+## (3) wet season: any node within this distance of a mapped river or creek channel
 water_buffer_m <- 500
 ## "mapped channel" = the Queensland Government watercourse-area polygons (ZDA, 2026-11-19)
 water_layers <- c("watercourse_area")
+
+### Which camera sites move back from the river, and how far may they go?
+## FV04 sits on the Burdekin bank; it moves to the driest spot within this radius
+relocate_offsets <- data.frame(grid_i = 2, grid_j = 3)
+relocate_max_m <- 300
+### Which backup goes last whatever its coverage gain?
+## FV01: on the Burdekin bank, and every drier spot within 400 m lies across the
+## river, outside the true property (see README)
+last_offsets <- data.frame(grid_i = -4, grid_j = 4,
+                           note = "on the Burdekin bank; no drier spot on the property nearby")
 
 ## the analysis minimum for sampled area (camDB), km2
 mcp_target_km2 <- 15
 
 ## colours for each status, used by the KML, the preview and QField
-status_colours <- c(footprint = "#E41A1C", core = "#FFD92F",
-                    drop_first = "#FF7F00", reserve = "#999999")
+status_colours <- c(footprint = "#E41A1C", main = "#FFD92F", backup = "#FF7F00")
 ## colours for the other map layers
 water_colour <- "#1F78B4"
 tower_colour <- "#1F78B4"
@@ -130,6 +146,8 @@ boundary <- st_sf(
   m_per_px = m_per_px,
   geometry = st_sfc(st_polygon(list(as.matrix(rbind(boundary_xy, boundary_xy[1, ])))), crs = crs_utm)
 ) # end boundary
+# the area cameras may go: the boundary shrunk by the inset
+boundary_inner <- st_buffer(boundary, -boundary_inset_m)
 
 ## how far the boundary reaches from the tower in each direction
 bb <- st_bbox(boundary)
@@ -166,27 +184,54 @@ water_buffer <- water_channels |>
 
 #
 ##
-### Lay the grid and classify the nodes ----
+### Lay the grid and sort the nodes ----
 
 ## grid nodes inside the inset boundary, with distance and bearing from the tower
 points <- make_grid_design(boundary, origin = tower_utm, spacing = grid_spacing_m,
                            inset = boundary_inset_m, id_prefix = point_prefix)
+
+## a small lookup from grid offsets to point IDs, for the hand-chosen nodes
+id_at <- function(offsets) {
+  points$point_id[match(paste(offsets$grid_i, offsets$grid_j), paste(points$grid_i, points$grid_j))]
+} # end lookup
 
 ## flag nodes within the buffer distance of a mapped channel
 near_water <- lengths(st_is_within_distance(points, water_channels, water_buffer_m)) > 0
 # the same, as the reason recorded against each node
 water_reason <- sprintf("within %d m of a mapped river or creek channel", water_buffer_m)
 
-## label each node footprint, reserve, drop_first or core
+## label each node footprint, main or backup
 points <- classify_points(points,
                           footprint_max_dist = footprint_max_dist_m,
                           footprint_bearing = footprint_bearing,
-                          reserve_min_dist = reserve_min_dist_m,
-                          reserve_bearing = reserve_bearing,
-                          drop_first_offsets = drop_first_offsets,
-                          drop_first_flags = setNames(list(near_water), water_reason))
-# keep the water flag itself, since footprint and reserve nodes can be near water too
+                          thin_min_dist = thin_min_dist_m,
+                          thin_bearing = thin_bearing,
+                          thin_reason = "far downwind block, checkerboard thinning",
+                          backup_offsets = backup_offsets,
+                          backup_flags = setNames(list(near_water), water_reason))
+# keep the water flag itself, since footprint nodes can be near water too
 points$near_water <- near_water
+# distance from each grid node to the nearest channel, before any moves
+points$water_dist_node_m <- as.numeric(st_distance(points, st_union(water_channels)))
+
+## move the chosen sites back from the river (recomputes position, distance and bearing)
+points <- relocate_away_from_water(points, ids = id_at(relocate_offsets),
+                                   water = water_channels, max_move = relocate_max_m,
+                                   allowed_area = boundary_inner, origin = tower_utm)
+
+## rank the backups: dry sites first, then near-water sites, each by coverage gained,
+## with the named sites last
+last_ids <- id_at(last_offsets)
+points <- rank_backup_sites(points, planned_status = c("footprint", "main"),
+                            backup_status = "backup", unsafe_col = "near_water",
+                            tie_col = "water_dist_after_m", last_ids = last_ids)
+# note why the last sites are last
+points$backup_reason[points$point_id %in% last_ids] <-
+  paste0(points$backup_reason[points$point_id %in% last_ids], "; ranked last: ", last_offsets$note)
+
+## the label shown on maps: the ID, plus the rank for backups
+points$map_label <- ifelse(is.na(points$backup_rank), points$point_id,
+                           sprintf("%s (B%d)", points$point_id, points$backup_rank))
 
 ## add WGS84 coordinates for GPS units and the CSV
 ll <- st_coordinates(st_transform(points, 4326))
@@ -194,12 +239,17 @@ points$lat <- ll[, "Y"]
 points$lon <- ll[, "X"]
 
 ### spatial coverage as minimum convex polygons (MCP)
-## planned = every non-reserve node
-planned <- points |> filter(status != "reserve")
+## planned = footprint and main, which are always deployed
+planned <- points |> filter(status != "backup")
 mcp_planned_km2 <- as.numeric(st_area(st_convex_hull(st_union(planned)))) / 1e6
-## first choice = planned, less every drop_first node (the worst case on the day)
-first_choice <- planned |> filter(status != "drop_first")
-mcp_first_choice_km2 <- as.numeric(st_area(st_convex_hull(st_union(first_choice)))) / 1e6
+## cameras left over for backups, and the coverage once they are all placed in rank order
+n_backup_cameras <- camera_cap - nrow(planned)
+mcp_at_cap_km2 <- points$mcp_after_km2[which(points$backup_rank == n_backup_cameras)]
+## the first backup rank at which coverage reaches the target
+rank_reaching_target <- min(points$backup_rank[!is.na(points$mcp_after_km2) &
+                                                 points$mcp_after_km2 >= mcp_target_km2])
+## every site
+mcp_all_km2 <- as.numeric(st_area(st_convex_hull(st_union(points)))) / 1e6
 
 ## the footprint wedge as a polygon, built in map coordinates so north is up
 # bearings along the arc, one per degree
@@ -229,12 +279,14 @@ tower_ozflux_utm <- st_sfc(st_point(c(146.189138, -19.887285)), crs = 4326) |>
   as.vector()
 tower_offset_m <- sqrt(sum((tower_ozflux_utm - tower_utm)^2))
 
-# show the design in the console
-print(st_drop_geometry(points) |> select(point_id, status, near_water, dist_m, bearing, drop_reason),
+# show the design in the console, backups in rank order
+print(st_drop_geometry(points) |>
+        arrange(status != "footprint", status != "main", backup_rank) |>
+        select(point_id, status, backup_rank, mcp_after_km2, near_water, moved_m, water_dist_after_m),
       digits = 4)
 print(table(points$status))
-message(sprintf("MCP planned %.2f km2; first choice only %.2f km2 (target %g km2)",
-                mcp_planned_km2, mcp_first_choice_km2, mcp_target_km2))
+message(sprintf("MCP planned %.2f km2; with %d backup cameras %.2f km2; target %g km2 reached at backup B%d",
+                mcp_planned_km2, n_backup_cameras, mcp_at_cap_km2, mcp_target_km2, rank_reaching_target))
 
 
 #
@@ -250,9 +302,12 @@ gpkg <- file.path(qfield_dir, gpkg_name)
 ## the points layer, in WGS84, with the columns field staff need
 points_out <- points |>
   # field-ready columns only
-  select(point_id, status, drop_reason, near_water, grid_i, grid_j, dist_m, bearing, lat, lon) |>
+  select(point_id, status, backup_rank, map_label, backup_reason, near_water, moved_m,
+         grid_i, grid_j, dist_m, bearing, lat, lon) |>
   # round to what is meaningful in the field
-  mutate(dist_m = round(dist_m), bearing = round(bearing, 1)) |>
+  mutate(dist_m = round(dist_m), bearing = round(bearing, 1), moved_m = round(moved_m)) |>
+  # backups in rank order after the planned sites, so lists read top-down
+  arrange(status == "backup", backup_rank, point_id) |>
   # GPS and QField work in WGS84
   st_transform(4326)
 
@@ -300,13 +355,12 @@ status_style <- list(
   kind = "categorized", attr = "status",
   categories = data.frame(
     value = names(status_colours),
-    label = c("footprint (deploy first)", "core", "drop_first (near water / interior)",
-              "reserve (only if spare)"),
+    label = c("footprint (always deploy)", "main (always deploy)", "backup (fill in rank order)"),
     fill = unname(status_colours),
-    outline = c("#000000", "#000000", "#000000", "#999999"),
-    shape = c("circle", "circle", "circle", "cross2"),
-    size = c(4, 4, 4, 4),
-    outline_width = c(0.4, 0.4, 0.4, 0.8)
+    outline = "#000000",
+    shape = "circle",
+    size = 4,
+    outline_width = 0.4
   ) # end categories
 ) # end status style
 
@@ -322,9 +376,9 @@ qgis_layers <- list(
   qgis_layer_xml("flux_tower", "Flux tower", src("flux_tower"), crs_ll,
                  list(kind = "single", geom = "marker", shape = "triangle", size = 5,
                       fill = tower_colour, outline = "#FFFFFF")),
-  # planned camera points, coloured by status and labelled with their ID
-  qgis_layer_xml("planned_points", "Planned points", src("planned_points"), crs_ll,
-                 status_style, label_field = "point_id"),
+  # camera sites, coloured by status and labelled with ID and backup rank
+  qgis_layer_xml("planned_points", "Camera sites", src("planned_points"), crs_ll,
+                 status_style, label_field = "map_label"),
   # the approximate property boundary, outline only
   qgis_layer_xml("boundary_approx", "Property boundary (approximate)", src("boundary_approx"), crs_ll,
                  list(kind = "single", geom = "fill", fill = NULL, outline = boundary_colour,
@@ -372,19 +426,20 @@ tower_kml <- st_sf(
                         tower_lat, tower_lon),
   geometry = st_sfc(st_point(c(tower_lon, tower_lat)), crs = 4326)
 ) # end tower placemark
-kml_path <- write_kml_points(points_out, paste0(stem, ".kml"),
+kml_path <- write_kml_points(mutate(points_out, point_id = map_label), paste0(stem, ".kml"),
                              status_colours = status_colours,
-                             description_cols = c("status", "drop_reason", "dist_m", "bearing", "lat", "lon"),
+                             description_cols = c("status", "backup_rank", "backup_reason", "moved_m",
+                                                  "dist_m", "bearing", "lat", "lon"),
                              boundary = boundary, boundary_name = "Property boundary (approximate)",
                              boundary_description = boundary$note,
                              extra_points = tower_kml, extra_folder = "Flux tower",
                              doc_name = paste("Fletcherview camera design", design_version))
 
-## CSV of points for printing and spreadsheets
+## CSV of points for printing and spreadsheets, backups in rank order
 points_out |>
   # drop the geometry, keep the field columns
   st_drop_geometry() |>
-  select(point_id, status, drop_reason, dist_m, bearing, lat, lon) |>
+  select(point_id, status, backup_rank, backup_reason, moved_m, dist_m, bearing, lat, lon) |>
   # full precision on coordinates
   mutate(lat = round(lat, 7), lon = round(lon, 7)) |>
   write_csv(file.path(campaign_dir, "outputs",
@@ -405,6 +460,8 @@ basemap_ext <- as.vector(terra::ext(basemap)) # xmin, xmax, ymin, ymax
 pts_df <- st_drop_geometry(points) |>
   # keep status in the legend order
   mutate(status = factor(status, levels = names(status_colours)))
+# the sites that moved, with their original grid node
+moved_df <- filter(pts_df, moved_m > 0)
 
 ## names for the map-layer legend, in the order they should be listed
 layer_labels <- c(boundary = "Property boundary (approximate)",
@@ -412,6 +469,8 @@ layer_labels <- c(boundary = "Property boundary (approximate)",
                                   footprint_bearing[2], footprint_max_dist_m / 1000),
                   channel = "Mapped river/creek channel",
                   buffer = sprintf("Within %d m of a channel", water_buffer_m))
+## names for the marker legend
+marker_labels <- c(tower = "Flux tower (AU-Fle)", node = "Grid node (camera moved off it)")
 
 ## the view: the property plus a margin
 view_x <- c(bb[["xmin"]] - 600, bb[["xmax"]] + 600)
@@ -434,29 +493,26 @@ p <- ggplot() +
   # the approximate boundary
   geom_sf(data = boundary, aes(colour = layer_labels[["boundary"]]),
           fill = NA, linewidth = 0.7, linetype = "longdash") +
-  ## planned points as filled circles; reserve rows are drawn at size 0 (invisible) only so
-  ## the status legend gets a reserve key, which override.aes then redraws as a cross
-  geom_point(data = pts_df,
-             aes(x, y, fill = status, size = I(ifelse(status == "reserve", 0, 3.2))),
-             shape = 21, colour = "black", stroke = 0.4) +
-  # reserve points as grey crosses over a black cross, so they show on any background
-  geom_point(data = filter(pts_df, status == "reserve"),
-             aes(x, y), shape = 4, size = 3.4, stroke = 2.2, colour = "black") +
-  geom_point(data = filter(pts_df, status == "reserve"),
-             aes(x, y), shape = 4, size = 3, stroke = 1.2, colour = status_colours[["reserve"]]) +
-  # point IDs just above each point, with a white halo for legibility
-  geom_label(data = pts_df, aes(x, y, label = point_id), size = 2.4, nudge_y = 170,
+  # for moved sites, an arrow from the grid node to the camera's new spot
+  geom_segment(data = moved_df, aes(x = node_x, y = node_y, xend = x, yend = y),
+               arrow = arrow(length = unit(0.18, "cm")), linewidth = 0.5) +
+  # and the grid node itself as a hollow circle
+  geom_point(data = moved_df, aes(node_x, node_y, shape = marker_labels[["node"]]),
+             size = 2.6, stroke = 0.6) +
+  # every camera site, filled by status
+  geom_point(data = pts_df, aes(x, y, fill = status), shape = 21, size = 3.2,
+             colour = "black", stroke = 0.4) +
+  # labels: ID, plus rank for backups, with a white halo for legibility
+  geom_label(data = pts_df, aes(x, y, label = map_label), size = 2.3, nudge_y = 170,
              linewidth = 0, label.padding = unit(0.08, "lines"), fill = "white", alpha = 0.8) +
-  # the tower, in its own legend
+  # the tower
   geom_point(data = data.frame(x = tower_utm[1], y = tower_utm[2]),
-             aes(x, y, shape = "Flux tower (AU-Fle)"), size = 3.8, fill = tower_colour, colour = "white") +
-  ## camera status legend; the reserve key is redrawn as a grey cross
-  scale_fill_manual(values = status_colours, limits = names(status_colours), drop = FALSE,
-                    name = "Camera status",
-                    guide = guide_legend(order = 1, override.aes = list(
-                      shape = c(21, 21, 21, 4), size = 3.2,
-                      colour = c("black", "black", "black", status_colours[["reserve"]]),
-                      stroke = c(0.4, 0.4, 0.4, 1.2)))) +
+             aes(x, y, shape = marker_labels[["tower"]]), size = 3.8, fill = tower_colour, colour = "white") +
+  # camera status legend
+  scale_fill_manual(values = status_colours, limits = names(status_colours),
+                    labels = c("footprint (always deploy)", "main (always deploy)",
+                               "backup, ranked B1, B2, ... (fill in order)"),
+                    name = "Camera site", guide = guide_legend(order = 1)) +
   ## map layer legend; every layer draws a key for every entry, so all their looks are set here
   scale_colour_manual(
     values = setNames(c(boundary_colour, status_colours[["footprint"]], water_colour, water_colour),
@@ -467,15 +523,19 @@ p <- ggplot() +
       alpha = c(1, 0.18, 0.45, 0.15),
       linetype = c("longdash", "dashed", "solid", "dotted"),
       linewidth = c(0.7, 0.5, 0.2, 0.3)))) +
-  # tower legend
-  scale_shape_manual(values = c("Flux tower (AU-Fle)" = 24), name = NULL,
-                     guide = guide_legend(order = 3)) +
+  ## marker legend; both marker layers draw both keys, so their looks are set here too
+  scale_shape_manual(values = setNames(c(24, 1), marker_labels), limits = unname(marker_labels),
+                     name = NULL,
+                     guide = guide_legend(order = 3, override.aes = list(
+                       fill = c(tower_colour, NA), colour = c(tower_colour, "black"),
+                       size = c(3.8, 2.6)))) +
   # crop to the property, in UTM
   coord_sf(crs = crs_utm, datum = crs_utm, xlim = view_x, ylim = view_y, expand = FALSE) +
   # labels
   labs(title = paste("Fletcherview camera design", design_version),
-       subtitle = sprintf("%d m grid from the flux tower. Basemap: QTopo 1:25k (State of Queensland).",
-                          grid_spacing_m),
+       subtitle = sprintf(paste0("%d m grid from the flux tower. %d cameras: %d always deployed, ",
+                                 "%d to backups B1-B%d. Basemap: QTopo 1:25k (State of Queensland)."),
+                          grid_spacing_m, camera_cap, nrow(planned), n_backup_cameras, n_backup_cameras),
        x = NULL, y = NULL) +
   theme_minimal(base_size = 10) +
   theme(legend.position = "right", panel.grid = element_blank())
@@ -489,18 +549,23 @@ ggsave(paste0(stem, "_preview.png"), p, width = 11, height = 7, dpi = 200, bg = 
 
 ## every number the README quotes, one row each
 n_status <- table(factor(points$status, levels = names(status_colours)))
+# the moved and last-ranked sites, for the README
+moved <- points |> st_drop_geometry() |> filter(moved_m > 0)
 summary_table <- data.frame(
   quantity = c("m_per_px", "boundary_area_ha", "n_nodes",
-               paste0("n_", names(n_status)), "n_planned", "n_first_choice",
-               "n_near_water_all", "n_near_water_footprint", "n_near_water_reserve",
-               "mcp_planned_km2", "mcp_first_choice_km2", "mcp_target_km2",
+               paste0("n_", names(n_status)), "n_planned", "camera_cap", "n_backup_cameras",
+               "mcp_planned_km2", "mcp_at_camera_cap_km2", "mcp_all_sites_km2", "mcp_target_km2",
+               "backup_rank_reaching_target",
+               paste0(moved$point_id, "_moved_m"),
+               paste0(moved$point_id, "_water_dist_before_m"),
+               paste0(moved$point_id, "_water_dist_after_m"),
                "extent_west_km", "extent_east_km", "extent_north_km", "extent_south_km",
                "tower_offset_to_ozflux_m"),
   value = c(round(m_per_px, 3), round(as.numeric(st_area(boundary)) / 1e4),
-            nrow(points), as.vector(n_status), nrow(planned), nrow(first_choice),
-            sum(points$near_water), sum(points$near_water & points$status == "footprint"),
-            sum(points$near_water & points$status == "reserve"),
-            round(mcp_planned_km2, 2), round(mcp_first_choice_km2, 2), mcp_target_km2,
+            nrow(points), as.vector(n_status), nrow(planned), camera_cap, n_backup_cameras,
+            round(mcp_planned_km2, 2), round(mcp_at_cap_km2, 2), round(mcp_all_km2, 2), mcp_target_km2,
+            rank_reaching_target,
+            round(moved$moved_m), round(moved$water_dist_node_m), round(moved$water_dist_after_m),
             round(extent_km, 2), round(tower_offset_m, 1))
 ) # end summary table
 write_csv(summary_table, file.path(campaign_dir, "outputs",

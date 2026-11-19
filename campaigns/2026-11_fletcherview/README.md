@@ -12,8 +12,9 @@ the scripts record how. Every derived number lives in the summary tables the scr
 write, not in this file:
 
 - `outputs/wind_summary_v1.csv` — wind record size, circular means, sector shares
-- `outputs/design_summary_v2.csv` — scale, node counts by status, water flags, MCP
-  areas against the target, extents (`design_summary_v1.csv` holds the v1 design)
+- `outputs/design_summary_v3.csv` — scale, site counts by status, cameras for
+  backups, MCP areas against the target, the FV04 move, extents (earlier designs have
+  their own `design_summary_vN.csv`)
 
 ## How to run
 
@@ -36,21 +37,26 @@ Coordinate-bearing outputs (the QField folder, KML, points CSV, preview) are wri
 
 ## Field map in QField
 
-`outputs/qfield_v2/` is a self-contained QField project:
+`outputs/qfield_v3/` is a self-contained QField project:
 
 | File | Contents |
 |---|---|
-| `fletcherview_v2.qgs` | the project: layer order, symbols, labels, opening view |
-| `fletcherview_design_v2.gpkg` | planned points, flux tower, approximate boundary, footprint wedge, mapped channels, 500 m water zone, and an empty `deployments` layer |
+| `fletcherview_v3.qgs` | the project: layer order, symbols, labels, opening view |
+| `fletcherview_design_v3.gpkg` | camera sites, flux tower, approximate boundary, footprint wedge, mapped channels, 500 m water zone, and an empty `deployments` layer |
 | `qtopo_basemap.tif` | QTopo 1:25k basemap (sheets 8158-31 and -32), 3 m pixels, works offline |
 
 Copy the whole folder to the phone (on iOS, into QField's folder via the Files app) and
 open the `.qgs`. Every layer except `deployments` is read-only. To log a camera, add a
 point to `deployments` at the tree: pick the `point_id` from the drop-down, type the
 `deployment_id` (the ID used in EpiCollect), and `recorded_at` fills itself with the
-current time. The KML in `outputs/` holds the same points for Google Earth.
+current time. The KML in `outputs/` holds the same sites for Google Earth.
 
-## Design v2
+**Using the sites in the field.** Put a camera at every footprint and main site. Then
+take the cameras that are left and work down the backup list, B1 first; if a backup
+site cannot be reached, skip it and go to the next. Backups carry their rank on the map
+label (e.g. "FV13 (B1)") and in the points CSV, which lists them in rank order.
+
+## Design v3
 
 ### Step 1: where the tower looks (`01_wind_footprint.R`)
 
@@ -68,7 +74,7 @@ the south-west to west, and is more concentrated than the full-year record. The
 footprint is therefore taken as the arc from 10° to 125° (NNE to ESE) from the tower.
 The 2025 season contributes only January and February, because the 2025 file ends in
 July; its mean direction differs from 2023 and 2024 (see the per-year rows of
-`wind_summary_v1.csv`). The wind analysis is unchanged from v1.
+`wind_summary_v1.csv`). The wind analysis is unchanged since v1.
 
 Tower height is 25 m and canopy height 12 m (OzFlux metadata).
 
@@ -96,22 +102,38 @@ on the tower. Nodes are kept if they lie inside the boundary shrunk inward by 10
 since each camera goes on the best tree within about 100 m of its node. IDs run north
 to south, then west to east (FV01, FV02, ...).
 
-**Status.** The first rule that matches wins.
+**Status.** Every grid node is one of three field statuses. The first rule that
+matches wins.
 
-| Status | Rule | Field meaning |
+| Status | Rule | In the field |
 |---|---|---|
-| `footprint` | the tower node, or within 2,000 m at a bearing of 10–125° | upwind source area; deploy first, even near water |
-| `reserve` | bearing 170–330°, farther than 1,600 m, and odd `i + j` (checkerboard thin of the far western block) | deploy only if cameras are spare |
-| `drop_first` | within 500 m of a mapped channel, **or** grid offset (i = −3, j = 3) or (i = −3, j = 1) | planned, but the first to give up on the day (wet-season access, cameras short) |
-| `core` | everything else | deploy |
+| `footprint` | the tower node, or within 2,000 m at a bearing of 10–125° | always deploy, even near water |
+| `backup` | any of: within 500 m of a mapped channel; every other node (odd `i + j`) beyond 1,600 m at a bearing of 170–330° (the far downwind block, checkerboard-thinned); grid offsets (i = −3, j = 3) and (i = −3, j = 1), two interior downwind nodes | fill in rank order with the cameras left after footprint and main |
+| `main` | everything else | always deploy |
 
 `i` and `j` are the grid column and row offsets from the tower (east and north
-positive). Each `drop_first` point carries a `drop_reason`, and every point carries a
-`near_water` flag, so footprint and reserve points near water are visible too.
+positive). Each backup carries a `backup_reason` listing every rule it meets.
 
-**Outputs.** The QField folder above; a KML with the boundary, points in one folder per
-status, and the flux tower; a points CSV; and a preview over the QTopo basemap with
-legends for camera status and every map layer.
+**Camera budget.** The campaign has 30 cameras. Footprint and main sites take some
+of them; the rest go to backups (`n_planned` and `n_backup_cameras` in the design
+summary).
+
+**Backup ranking.** Backups away from water come first, then those near water; within
+each group the next site is the one that most enlarges the minimum convex polygon
+(MCP) of the cameras already placed. Sites that add less than 1 ha more than the best
+count as ties and go to the one farthest from water. FV01 is ranked last whatever its
+gain (see the decisions log). The design summary gives the MCP of the always-deployed
+sites, the MCP once every backup camera is placed, and the backup rank at which
+coverage passes the 15 km² target.
+
+**Moved site.** FV04 sat on the bank of the Burdekin. Its camera goes to the spot
+farthest from any mapped channel within 300 m of its grid node and inside the inset
+boundary (the distances before and after are in the design summary). The grid node
+stays its reference; the preview draws an arrow from the node to the new spot.
+
+**Outputs.** The QField folder above; a KML with the boundary, sites in one folder per
+status, and the flux tower; a points CSV with backups in rank order; and a preview over
+the QTopo basemap with legends for camera status, every map layer and the markers.
 
 ## Decisions log
 
@@ -135,7 +157,8 @@ that are not on the MCP boundary — also selects FV07. The two nodes are named 
 offset rather than ID, so a boundary change that renumbers points cannot silently move
 the choice to a different node.
 
-**2026-11-19 — v2: wet-season water rule (ZDA).** Any camera within 500 m of a river or
+**2026-11-19 — v2: wet-season water rule (ZDA).** *(v2 statuses; v3 below renamed and
+merged them.)* Any camera within 500 m of a river or
 water body is `drop_first`, because of wet-season flooding and access. "River or water
 body" is the mapped channel polygons only; broader definitions (adding dams or major
 creek lines) caught 18–23 of 34 nodes and left too few cameras. Footprint nodes are
@@ -148,25 +171,35 @@ footprint is taken from the OzFlux wind record only. The preview and field map u
 QTopo basemap and the design's own layers, so neither the hand-drawn orange outline
 nor the red boundary appears.
 
-**Planned and worst-case coverage.** With the water rule, the planned set (every
-non-reserve point) still covers the v1 MCP, but if every `drop_first` camera is given
-up the remaining footprint and core cameras cover well under the 15 km² analysis
-minimum (`mcp_first_choice_km2` against `mcp_target_km2` in `design_summary_v2.csv`).
-The lost area is the grid's outer corners near the channels: the north-west (FV01, FV05),
-the north and east along the Burdekin (FV04, FV12, FV21) and the south (FV30, FV34).
+**2026-11-19 — v3: one ranked backup list, "core" renamed "main" (ZDA).** v2 had two
+categories with overlapping meaning: `drop_first` (planned, skip if needed) and
+`reserve` (unplanned, use if spare). Skipping a `drop_first` site freed a camera that
+was implicitly meant for a `reserve` site, and three of the five reserves were drier
+than the `drop_first` sites ranked above them. Both are now one `backup` list, ranked
+as described above (ZDA chose coverage-first ranking over safest-first, which stayed
+below the 15 km² target with 30 cameras). "Core" is renamed "main" because "core" means
+something else to the flux community; "main" was chosen over "property" to avoid
+confusion with the property boundary.
+
+**FV04 moved back from the river; FV01 ranked last instead (2026-11-19).** ZDA asked
+for both to move back from the Burdekin. FV04 moves within 300 m to drier ground. FV01
+cannot: every spot within 400 m of its node that is clear of the channel lies north of
+the river, which the traced boundary includes only because it is out by 100–200 m
+there. Moving FV01 to the nearest spot at least 500 m from any channel would place it
+1.4 km away and beside FV05, gaining no coverage. FV01 therefore stays at its node and
+is ranked last among the backups.
 
 ## Open questions
 
-- **Worst-case MCP below target.** If all `drop_first` cameras are skipped, coverage
-  falls below 15 km². Should some outer `drop_first` nodes be kept regardless (for
-  example FV05 and FV34, which sit near the edge of the 500 m zone), or should a camera
-  be moved away from the channel within its 100 m search radius instead of dropped?
+- **FV02 and FV03 are in the deployed backups but at the water's edge.** Ranked by
+  coverage, FV02 (B5, about 60 m from a channel) and FV03 (B11, inside the mapped
+  Burdekin channel on QTopo) both fall within the cameras available. Should they get
+  the same treatment as FV04 (move to the driest spot within 300 m), or drop down the
+  list?
 - **Boundary accuracy.** Over QTopo, the traced north boundary runs inside the Burdekin
   channel, where the screenshot trace followed the south bank, so the trace is out by
-  roughly 100–200 m there. FV01 and FV03 sit in or beside the mapped channel. The fix is
-  still the cadastral parcel (see the to-do in the design notes).
-- **Reserve near water.** FV02 and FV06 are reserve and within 500 m of a channel. They
-  stay reserve; say if they should be removed altogether.
+  roughly 100–200 m there. The fix is still the cadastral parcel (see the to-do in the
+  design notes); it would also settle where FV01 can go.
 
 ## Design notes from the v1 chat session
 
