@@ -24,7 +24,8 @@ the repository root, for example:
 
 ```sh
 Rscript campaigns/2026-11_fletcherview/01_wind_footprint.R
-Rscript campaigns/2026-11_fletcherview/02_design_grid.R
+Rscript campaigns/2026-11_fletcherview/02_water_and_basemap.R
+Rscript campaigns/2026-11_fletcherview/03_design_grid.R
 ```
 
 ## Coordinates and imagery
