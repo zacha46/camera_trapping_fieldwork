@@ -1,0 +1,16 @@
+quantity,value
+m_per_px,8.356
+boundary_area_ha,2400
+n_nodes,34
+n_footprint,7
+n_core,20
+n_drop_first,2
+n_reserve,5
+n_planned,29
+mcp_planned_km2,19.52
+mcp_less_drop_first_km2,19.52
+extent_west_km,3.86
+extent_east_km,3.66
+extent_north_km,3.64
+extent_south_km,1.48
+tower_offset_to_ozflux_m,24.8
