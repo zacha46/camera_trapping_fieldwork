@@ -53,3 +53,29 @@ rsconnect/
 src/*.o
 src/*.so
 src/*.dll
+
+# macOS
+.DS_Store
+
+# Claude Code: local notes and per-machine settings stay off GitHub
+.claude/prompts_and_responses/
+.claude/settings.local.json
+
+# Campaign raw inputs: large (netCDF, PDF basemaps) or not ours to redistribute
+# (Google satellite screenshots). Only a README describing them is tracked.
+campaigns/*/data/raw/*
+!campaigns/*/data/raw/README.md
+
+# Large rasters and netCDF anywhere in the repo
+*.nc
+*.tif
+*.tiff
+
+# Campaign outputs that carry camera coordinates or third-party imagery.
+# This is a public repo, so planned and deployed camera locations never go up.
+# Wind roses and summary tables (no coordinates) are tracked.
+campaigns/*/outputs/*.gpkg
+campaigns/*/outputs/*.kml
+campaigns/*/outputs/*points*.csv
+campaigns/*/outputs/*preview*.png
+campaigns/*/data/processed/*.gpkg
