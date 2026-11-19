@@ -77,9 +77,6 @@ campaigns/*/data/raw/*
 campaigns/*/outputs/*.gpkg
 campaigns/*/outputs/*.kml
 campaigns/*/outputs/*points*.csv
-campaigns/*/outputs/*preview*.png
 campaigns/*/data/processed/*.gpkg
-# QField project folders: GeoPackage with camera points, basemap and .qgs
-campaigns/*/outputs/qfield_*/
 # dont need old outputs
-campaigns/2026-11_fletcherview/outputs/OLD/*
+campaigns/*/outputs/OLD/*
