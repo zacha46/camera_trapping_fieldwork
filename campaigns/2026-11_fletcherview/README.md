@@ -15,6 +15,10 @@ write, not in this file:
 - `outputs/design_summary_v4.csv` — scale, site counts by status, cameras for
   backups, MCP areas against the target, the FV04 move, extents (earlier designs have
   their own `design_summary_vN.csv`)
+- `outputs/design_summary_v6.csv`, `nvis_areas_v6.csv`, `design_comparison_v6.csv`,
+  `design_mcp_v6.csv`, `hectares_v6.csv` and `hectare_distances_v6.csv` — the v6
+  hectare design: parcel areas, subgroup areas, hectare purity and spacing, and the
+  comparison with v4 and v5
 
 ## How to run
 
@@ -25,7 +29,13 @@ From the repository root, after placing the raw inputs listed in
 Rscript campaigns/2026-11_fletcherview/01_wind_footprint.R
 Rscript campaigns/2026-11_fletcherview/02_water_and_basemap.R   # needs internet and a system GDAL
 Rscript campaigns/2026-11_fletcherview/03_design_grid.R
+Rscript campaigns/2026-11_fletcherview/04_fetch_v6_layers.R  # needs internet
+Rscript campaigns/2026-11_fletcherview/05_design_hectares.R
 ```
+
+The v6 scripts read every site-specific value from `v6_site_config.R`. To run the
+hectare design at another TERN SuperSite, copy that file and the two scripts into the
+new campaign and change the config.
 
 `02_water_and_basemap.R` reads the QTopo GeoPDFs with the command-line GDAL tools,
 because the GDAL bundled with the CRAN builds of sf and terra cannot read PDFs. On
@@ -141,6 +151,59 @@ in metres; a KML with the boundary, sites in one folder per
 status, and the flux tower; a points CSV with backups in rank order; and a preview over
 the QTopo basemap with legends for camera status, every map layer and the markers.
 
+## Design v6: stratified hectares
+
+v6 replaces the grid with 1 ha plots (100 × 100 m) stratified by vegetation. Within a
+plot the cameras are not independent: the plot, not the camera, is the sampling unit,
+and cameras go on features chosen in the field. The PDF `outputs/fletcherview_v6.pdf`
+holds the maps, a close-up of each hectare over satellite imagery, the hectare table
+and the comparison with v4 and v5. `outputs/qfield_v6/` is the matching QField project.
+
+**Caveat.** The state and national layers are coarse (NVIS is mapped on a 100 m grid)
+and the tracks are unverified. Confirm each hectare's vegetation subgroup and its
+access on the ground before deploying.
+
+### Step 1: layers (`04_fetch_v6_layers.R`)
+
+- **Boundary.** The Queensland cadastral parcel for Lot 4 on DV450 (Digital Cadastral
+  Database, © State of Queensland, CC BY 4.0). Its mapped area differs from its
+  registered area by the cadastre's stated mapping accuracy (1:25,000); both are in
+  `design_summary_v6.csv`.
+- **Vegetation.** NVIS 6.0 extant Major Vegetation Subgroups (DCCEEW) are the
+  strata. Queensland regional ecosystems (pre-clearing and remnant) are included for
+  interpretation only.
+- **Tracks.** OpenStreetMap first, then the Queensland roads and tracks layer, then
+  the collaborator's v5 points. Every track feature carries its source. A free
+  satellite backdrop (Esri World Imagery) is drawn in the PDF and QField so tracks can
+  be checked by eye.
+
+### Step 2: hectares (`05_design_hectares.R`)
+
+| Rule | Setting |
+|---|---|
+| Stratum | an NVIS subgroup covering at least 1 km² of the parcel; smaller subgroups are listed but not sampled |
+| Hectares per stratum | 2; the TERN core plot and the A2O hectare count towards their own subgroup |
+| Cameras | 30 in total; 4 per hectare if that fits, otherwise 3 |
+| Access | a track crosses every non-core hectare, so its edge is on the track and no part of it is more than about 140 m from it |
+| Purity | share of the hectare mapped as its subgroup; at least 75% where possible |
+| Spacing | replicates of one subgroup about 1 km apart |
+| Candidates | squares on a 25 m lattice, wholly inside the parcel, not overlapping another hectare |
+| Order | core plot first, then by straight-line distance from the flux tower |
+
+Each hectare gets four nominal guide points at its edge midpoints; the one nearest a
+track is the on-track guide. The field note asks for one camera on the track and the
+rest off it, on dense tussock for spectacled hare-wallaby and on rock, logs or
+termite mounds with a low camera for reptiles. The design uses no drift fences or
+thermal cues.
+
+### Step 3: comparison with the grid
+
+`design_comparison_v6.csv` gives, for each NVIS subgroup, its share of the parcel
+against the cameras and the share of sampled sites in that subgroup under the v4 grid
+(the 30 sites given cameras), the v5 relocated points and the v6 hectares. The v4 and
+v5 rows include sites that fall off the cadastral parcel. `design_mcp_v6.csv` gives
+each design's minimum convex polygon.
+
 ## Decisions log
 
 **2026-11-19 — v1 reproduced in R (ZDA with Claude Code).** Design v1 was first built
@@ -207,6 +270,23 @@ the v3 ordering). Water is now judged at the camera's final position, which make
 moved FV04 a main site. Counts, the camera budget and coverage are in
 `design_summary_v4.csv`.
 
+**2026-11-25 — v6: stratified hectares, cadastral boundary (ZDA with Claude Code).**
+The cadastral parcel replaces the traced boundary for v6. The v4 grid stays as built,
+and the comparison counts its sites that fall off the parcel. Public track data barely
+cover the property. OpenStreetMap has no tracks inside the parcel, only a short service
+road, and the Queensland layer has none. ZDA therefore chose to treat each v5 point as a
+point on a track, since the collaborator placed every v5 point on a track interpreted
+from satellite images. A hectare crossed only by such a point carries a field note to
+confirm the track exists. The A2O site 61 falls in the same subgroup as the TERN core
+plot, so ZDA chose it as that subgroup's second replicate rather than as an extra
+hectare. The core plot's corners are not published. OzFlux places plot QDAEIU0008 south
+of the tower, so a placeholder square sits just south of it, to be replaced by the
+plot's surveyed pegs. The cleared class (NVIS 98) falls just under the 1 km² threshold
+(`nvis_areas_v6.csv`) and is not sampled. The A2O hectare is below the 75% purity aim,
+because the A2O site sits beside cleared ground around the station buildings. The
+cameras left over after the hectares are not yet assigned (`cameras_spare` in
+`design_summary_v6.csv`).
+
 ## Open questions
 
 - **FV03 gets a camera but sits inside the Burdekin channel.** Ranked by coverage,
@@ -215,8 +295,15 @@ moved FV04 a main site. Counts, the camera budget and coverage are in
   like FV01, move it like FV04, or leave it.
 - **Boundary accuracy.** Over QTopo, the traced north boundary runs inside the Burdekin
   channel, where the screenshot trace followed the south bank, so the trace is out by
-  roughly 100–200 m there. A cadastral parcel (ZDA is obtaining a shapefile) will
-  replace it and settle where FV01 and FV03 can go.
+  roughly 100–200 m there. The cadastral parcel is now fetched for v6
+  (`04_fetch_v6_layers.R`); the v4 sites off it are counted in
+  `design_comparison_v6.csv`. Rebuilding v4 on the parcel is not yet done.
+- **v6: water and the riverside hectares.** v6 has no water rule. One subgroup-9
+  hectare sits on the Burdekin bank and both tussock-grassland hectares sit beside
+  creek lines, because that subgroup follows the watercourses. Check wet-season access
+  before deploying them.
+- **v6: spare cameras.** Options: a fifth camera in some hectares, or a seventh
+  hectare (for example in the cleared class, which falls just short of a stratum).
 
 ## Design notes from the v1 chat session
 
