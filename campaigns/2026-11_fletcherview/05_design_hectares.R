@@ -461,19 +461,32 @@ gpkg_layers <- list(
   a2o_site = st_sf(name = "A2O site 61", geometry = a2o),
   deployments = deployments
 ) # end layer list
-# the GeoPackage lives in the QField folder, with a copy at the top of outputs/
-qfield_dir <- file.path(out_dir, paste0("qfield_", design_version))
-dir.create(qfield_dir, showWarnings = FALSE)
+# the deliverable: every layer in one GeoPackage at the top of outputs/
 gpkg_name <- sprintf("%s_%s.gpkg", site_name, design_version)
-gpkg <- file.path(qfield_dir, gpkg_name)
+gpkg <- file.path(out_dir, gpkg_name)
 # start fresh so stale layers never linger
 unlink(gpkg)
 # write each layer
 for (lyr in names(gpkg_layers)) {
   st_write(st_transform(gpkg_layers[[lyr]], 4326), gpkg, layer = lyr, quiet = TRUE)
 } # end per layer
-# copy it to outputs/ as the deliverable
-file.copy(gpkg, file.path(out_dir, gpkg_name), overwrite = TRUE)
+
+### the QField copy: one small GeoPackage per layer
+## QField on iOS marked some layers invalid when all of them shared one GeoPackage
+## with the editable deployments layer, so each layer gets its own file here
+qfield_dir <- file.path(out_dir, paste0("qfield_", design_version))
+# start the folder fresh so stale files never linger
+unlink(qfield_dir, recursive = TRUE)
+dir.create(qfield_dir)
+# the tracks file holds lines only (the v5 proxy points are in the v5 layer)
+qfield_layers <- gpkg_layers
+qfield_layers$tracks <- track_lines
+# for each layer,
+for (lyr in names(qfield_layers)) {
+  # write it to its own file named after the layer
+  st_write(st_transform(qfield_layers[[lyr]], 4326), file.path(qfield_dir, paste0(lyr, ".gpkg")),
+           layer = lyr, quiet = TRUE)
+} # end per QField layer
 
 
 #
@@ -659,8 +672,8 @@ file.copy(cache_imagery, file.path(qfield_dir, "esri_imagery.tif"), overwrite = 
 
 ## describe how QField draws each layer, top layer first
 crs_ll <- st_crs(4326)
-# source string for a layer inside the GeoPackage
-src <- function(lyr) paste0("./", gpkg_name, "|layername=", lyr)
+# source string for a layer: its own GeoPackage, next to the project
+src <- function(lyr) paste0("./", lyr, ".gpkg|layername=", lyr)
 qgis_layers <- list(
   # where cameras actually went: editable, with drop-downs and an automatic timestamp
   qgis_layer_xml("deployments", "Deployments (record here)", src("deployments"), crs_ll,
@@ -690,8 +703,7 @@ qgis_layers <- list(
                       outline = "#000000", outline_width = 0.8),
                  geometry = "Polygon", label_field = "map_label"),
   # mapped tracks only (the v5 proxy points are drawn with the v5 layer)
-  qgis_layer_xml("tracks", "Tracks (OSM / QLD)",
-                 paste0(src("tracks"), "|geometrytype=LineString"), crs_ll,
+  qgis_layer_xml("tracks", "Tracks (OSM / QLD)", src("tracks"), crs_ll,
                  list(kind = "single", geom = "line", outline = col_track, outline_width = 0.8),
                  geometry = "Line"),
   # the earlier designs, for reference

@@ -79,5 +79,5 @@ min_purity <- 0.75
 target_spacing_m <- 1000
 
 ### Earlier designs to compare against
-v4_gpkg_path <- file.path(campaign_dir, "outputs", "qfield_v4", "fletcherview_design_v4.gpkg")
-v4_summary_path <- file.path(campaign_dir, "outputs", "design_summary_v4.csv")
+v4_gpkg_path <- file.path(campaign_dir, "outputs", "OLD", "qfield_v4", "fletcherview_design_v4.gpkg")
+v4_summary_path <- file.path(campaign_dir, "outputs", "OLD", "design_summary_v4.csv")
