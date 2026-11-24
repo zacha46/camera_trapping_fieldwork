@@ -8,7 +8,8 @@
 #'       symbol per value (`style$attr`, `style$categories`); markers by default, or
 #'       polygon fills with `style$geom = "fill"`.
 #'     \item `"single"`: every feature drawn alike, as a marker (`style$geom =
-#'       "marker"`) or a polygon fill (`style$geom = "fill"`).
+#'       "marker"`), a line (`style$geom = "line"`, drawn in the `outline` colour,
+#'       width and style) or a polygon fill (`style$geom = "fill"`).
 #'     \item `"raster"`: a three-band RGB image drawn as is.
 #'   }
 #'   Colours are hex strings (`"#RRGGBB"`) with an optional `alpha` (0-255).
@@ -25,7 +26,8 @@
 #'   `"./design.gpkg|layername=planned_points"` or `"./basemap.tif"`.
 #' @param crs sf crs object. The layer's CRS.
 #' @param style list. Drawing style, as described above.
-#' @param geometry character. "Point" or "Polygon" for vector layers; ignored for rasters.
+#' @param geometry character. "Point", "Line" or "Polygon" for vector layers; ignored for
+#'   rasters.
 #' @param label_field character or NULL. Column to label features with.
 #' @param read_only logical. Stop QField from editing this layer.
 #' @param field_defaults named character or NULL. QGIS expressions that fill a
@@ -190,6 +192,14 @@ qgis_symbol_xml <- function(name, s) {
                     opt("outline_width", outline_width), opt("outline_width_unit", "MM"),
                     "</Option></layer>")
     type <- "marker"
+  } else if (s$geom == "line") {
+    # a simple line: colour, width and dash style taken from the outline settings
+    layer <- paste0("<layer class=\"SimpleLine\" enabled=\"1\" locked=\"0\" pass=\"0\"><Option type=\"Map\">",
+                    opt("line_color", qgis_colour(outline, alpha)),
+                    opt("line_style", outline_style),
+                    opt("line_width", outline_width), opt("line_width_unit", "MM"),
+                    "</Option></layer>")
+    type <- "line"
   } else {
     # a simple fill: optional fill colour and an outline
     fill_style <- if (is.null(s$fill) || is.na(s$fill)) "no" else "solid"
