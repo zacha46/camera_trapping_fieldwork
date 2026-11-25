@@ -326,6 +326,9 @@ hectares$dist_replicate_m <- vapply(seq_len(nrow(hectares)), function(i) {
 
 ### One short field note per hectare:
 ## what is special about this hectare, then the placement guidance shared by all
+# the placement guidance every hectare's note ends with
+shared_guidance <- paste0("1 camera on-track, rest off-track; dense tussock (hare-wallaby); ",
+                          "rock, logs, termite mounds with a low camera (reptiles).")
 hectares$field_note <- paste0(
   # the hectare-specific part
   case_when(
@@ -342,8 +345,7 @@ hectares$field_note <- paste0(
   # a warning where the hectare is mixed
   ifelse(hectares$purity < min_purity, "Mixed vegetation: check the subgroup. ", ""),
   # the shared guidance
-  "1 camera on-track, rest off-track; dense tussock (hare-wallaby); rock, logs, ",
-  "termite mounds with a low camera (reptiles).")
+  shared_guidance)
 
 # view the design
 st_drop_geometry(hectares) |>
@@ -352,10 +354,154 @@ st_drop_geometry(hectares) |>
 
 #
 ##
+### Plan backups for the hectares beyond the creek ----
+
+## cut the property along the creek
+# if the hydrography cache is missing,
+if (!file.exists(hydro_cache)) {
+  # stop because the creek cannot be found without it
+  stop("No cached hydrography at ", hydro_cache, "\nRun 02_water_and_basemap.R first.")
+} # end hydrography check
+hydro <- st_read(hydro_cache, quiet = TRUE)
+# grab the creek's mapped lines
+barrier <- hydro[hydro$layer == "watercourse_line" & hydro$name %in% access_barrier_name, ]
+# if the creek is not in the hydrography,
+if (nrow(barrier) == 0) {
+  # stop because no hectare could be judged beyond it
+  stop("No watercourse line named '", access_barrier_name, "' in ", hydro_cache, ".\n",
+       "Check access_barrier_name in v6_site_config.R against the hydrography names.")
+} # end barrier check
+# cut a 2 m gap along the creek so the property falls apart into pieces
+pieces <- st_cast(st_difference(st_union(boundary), st_union(st_buffer(st_geometry(barrier), 2))),
+                  "POLYGON")
+# find which parcel part each piece came from
+parcel_parts <- st_cast(st_union(boundary), "POLYGON")
+part_of <- vapply(st_intersects(pieces, parcel_parts), function(x) x[1], integer(1))
+
+## the reachable side: in each parcel part, the piece nearest the tower
+# distance from the tower to each piece
+d_piece <- as.numeric(st_distance(pieces, tower))
+# keep a piece if no other piece of its part is nearer the tower (uncut parts stay whole)
+reachable_piece <- vapply(seq_along(pieces), function(i) {
+  d_piece[i] == min(d_piece[part_of == part_of[i]])
+}, logical(1))
+reachable_area <- st_sf(geometry = st_union(pieces[reachable_piece]))
+
+## which hectares lie beyond the creek?
+hectares$beyond_barrier <- lengths(st_within(hectares, reachable_area)) == 0
+at_risk <- hectares$hectare_id[hectares$beyond_barrier]
+# view them, expecting MVS09-B, MVS37-A and MVS37-B
+message("Beyond ", access_barrier_name, ": ", paste(at_risk, collapse = ", "))
+# if the backup plan names a hectare that is not beyond the creek,
+if (!all(backup_plan$replaces %in% at_risk)) {
+  # stop because the plan no longer matches the design
+  stop("backup_plan replaces ",
+       paste(setdiff(backup_plan$replaces, at_risk), collapse = ", "),
+       ", which is not beyond ", access_barrier_name, ".\n",
+       "Update backup_plan in v6_site_config.R to name the hectares listed above.")
+} # end plan check
+# if a hectare beyond the creek has no backup,
+if (!all(at_risk %in% backup_plan$replaces)) {
+  # warn, because it is left without one
+  warning("No backup planned for ", paste(setdiff(at_risk, backup_plan$replaces), collapse = ", "),
+          " beyond ", access_barrier_name, ".")
+} # end coverage check
+
+## pick each backup on the reachable side, one at a time, in plan order
+# backups sit on a v5 point, the collaborator's interpreted tracks (ZDA)
+backup_tracks <- tracks[tracks$source == "v5_point_proxy", ]
+# start from the hectares that stay reachable; at-risk hectares are not deployed in this case
+placed <- hectares[!hectares$beyond_barrier, "mvs_code"]
+# init a list to hold the backups
+backup_list <- list()
+# for each backup in the plan,
+for (i in seq_len(nrow(backup_plan))) {
+  # choose one square of its subgroup, about 1 km from the nearest reachable replicate
+  pick <- select_hectares(reachable_area, nvis, backup_tracks, backup_plan$mvs_code[i], 1,
+                          origin = tower, existing = placed, size_m = hectare_size_m,
+                          lattice_m = lattice_m, min_purity = min_purity,
+                          target_spacing_m = target_spacing_m,
+                          require_track = backup_plan$needs_track[i])
+  # grab the IDs already used in this subgroup, main and backup
+  prefix <- sprintf("MVS%02d-", backup_plan$mvs_code[i])
+  used <- c(hectares$hectare_id, vapply(backup_list, function(x) x$hectare_id, character(1)))
+  used <- used[startsWith(used, prefix)]
+  # find the highest letter taken (0 if none)
+  last <- max(c(0, match(substring(used, nchar(prefix) + 1), LETTERS)))
+  # name it with the letter after that, e.g. MVS09-C after MVS09-B
+  pick$hectare_id <- paste0(prefix, LETTERS[last + 1])
+  # record which hectare it replaces
+  pick$replaces <- backup_plan$replaces[i]
+  # keep it
+  backup_list[[i]] <- pick[, c("hectare_id", "mvs_code", "purity", "replaces")]
+  # and count it as placed, so later backups keep their distance and never overlap it
+  placed <- rbind(placed, pick[, "mvs_code"])
+} # end per backup
+# stack the backups into one layer
+backups <- do.call(rbind, backup_list)
+
+### Describe each backup:
+## as for the main hectares, but with no rank: a backup takes its hectare's place
+backups <- left_join(backups, mvs_names, by = "mvs_code")
+# same camera count as the hectare it replaces
+backups$cameras <- cameras_per_hectare
+# centre latitude and longitude, 5 decimal places
+backup_centres <- st_centroid(st_geometry(backups))
+backup_ll <- st_coordinates(st_transform(backup_centres, 4326))
+backups$centre_lat <- round(backup_ll[, "Y"], 5)
+backups$centre_lon <- round(backup_ll[, "X"], 5)
+# distance from the tower
+backups$dist_tower_m <- as.numeric(st_distance(backup_centres, tower))
+# distances to every track feature, and the nearest (0 m when one crosses it)
+d_track_b <- matrix(as.numeric(st_distance(backups, tracks)), nrow = nrow(backups))
+backups$dist_track_m <- round(apply(d_track_b, 1, min))
+# the source of the nearest track feature, e.g. "v5_point_proxy (FV32)"
+nearest_b <- apply(d_track_b, 1, which.min)
+backups$track_source <- sprintf("%s (%s)", tracks$source[nearest_b], tracks$name[nearest_b])
+# distance to the nearest reachable hectare or backup of the same subgroup
+backups$dist_replicate_m <- vapply(seq_len(nrow(backups)), function(i) {
+  # the others in this subgroup, excluding the at-risk hectares and this backup itself
+  others <- rbind(hectares[!hectares$beyond_barrier, "mvs_code"], backups[-i, "mvs_code"])
+  others <- others[others$mvs_code == backups$mvs_code[i], ]
+  if (nrow(others) == 0) NA_real_ else
+    round(min(as.numeric(st_distance(backup_centres[i], st_centroid(st_geometry(others))))))
+}, numeric(1))
+# the field note: when to use it, access, a subgroup check, then the shared guidance
+backups$field_note <- paste0(
+  # when to use it
+  "Backup for ", backups$replaces, " if ", access_barrier_name, " cannot be crossed. ",
+  # how to reach it
+  ifelse(backups$dist_track_m > 0, "No track crosses it: confirm access. ",
+         "Track inferred from a v5 point: confirm it is drivable. "),
+  # NVIS is coarse, so the subgroup always needs checking on a backup
+  "Confirm the subgroup on the ground. ",
+  shared_guidance)
+# view the backups
+st_drop_geometry(backups) |>
+  select(hectare_id, replaces, mvs_code, purity, dist_tower_m, dist_track_m, dist_replicate_m)
+
+## tell the main hectares beyond the creek which backup stands in for them
+# match each at-risk hectare to its backup
+backup_for <- backups$hectare_id[match(hectares$hectare_id, backups$replaces)]
+# and put that first in their field note
+hectares$field_note <- ifelse(
+  is.na(backup_for), hectares$field_note,
+  paste0("Beyond ", access_barrier_name, ": if it cannot be crossed, use ", backup_for, ". ",
+         hectares$field_note))
+
+
+#
+##
 ### Mark the camera guide points ----
 
 # edge midpoints, the one nearest a track flagged on-track
 guides <- hectare_camera_guides(hectares, tracks, "hectare_id", cameras_per_hectare)
+guides$status <- "main"
+# and the same for the backups
+backup_guides <- hectare_camera_guides(backups, tracks, "hectare_id", cameras_per_hectare)
+backup_guides$status <- "backup"
+# one guide layer for both
+guides <- rbind(guides, backup_guides)
 # their latitude and longitude for the field
 guide_ll <- st_coordinates(st_transform(guides, 4326))
 guides$lat <- round(guide_ll[, "Y"], 5)
@@ -429,10 +575,17 @@ mcp
 ##
 ### Write the tracked summary tables ----
 
-## subgroup areas on the property
+## subgroup areas on the property, and on the side of the creek reachable in the wet
+# cut the subgroups to the reachable side
+nvis_reach <- suppressWarnings(st_intersection(nvis[, "mvs_code"], st_geometry(reachable_area)))
+# their area, km2, matched back to every subgroup (0 where none is reachable)
+reach_km2 <- tapply(as.numeric(st_area(nvis_reach)) / 1e6, nvis_reach$mvs_code, sum)
+nvis$reachable_km2 <- ifelse(is.na(reach_km2[as.character(nvis$mvs_code)]), 0,
+                             reach_km2[as.character(nvis$mvs_code)])
 write.csv(st_drop_geometry(nvis) |>
-            mutate(area_km2 = round(area_km2, 3), area_pct = round(100 * area_share, 1)) |>
-            select(mvs_code, mvs_name, area_km2, area_pct, eligible),
+            mutate(area_km2 = round(area_km2, 3), area_pct = round(100 * area_share, 1),
+                   reachable_km2 = round(reachable_km2, 3)) |>
+            select(mvs_code, mvs_name, area_km2, area_pct, eligible, reachable_km2),
           file.path(out_dir, sprintf("nvis_areas_%s.csv", design_version)), row.names = FALSE)
 
 ## the comparison of designs, with this design's columns named after its version
@@ -461,6 +614,14 @@ hect_table <- st_drop_geometry(hectares) |>
 write.csv(hect_table, file.path(out_dir, sprintf("hectares_%s.csv", design_version)),
           row.names = FALSE)
 
+## the backups without coordinates, with the hectare each replaces
+backup_table <- st_drop_geometry(backups) |>
+  transmute(hectare_id, replaces, mvs_code, subgroup = mvs_name, purity_pct = round(100 * purity),
+            cameras, dist_tower_m = round(dist_tower_m), dist_track_m, track_source,
+            dist_replicate_m)
+write.csv(backup_table, file.path(out_dir, sprintf("backup_hectares_%s.csv", design_version)),
+          row.names = FALSE)
+
 ## how far the v6 A2O point sat from the station and from the recorders now used
 # if the v6 GeoPackage is missing,
 if (!file.exists(v6_gpkg_path)) {
@@ -483,7 +644,8 @@ summary_tab <- data.frame(quantity = c(
   "a2o_min_dist_track_m", "v6_a2o_point_to_station_m", "v6_a2o_point_to_nearest_anchor_m",
   "min_purity_pct", "lowest_hectare_purity_pct", "track_km_on_parcel_osm",
   "track_km_on_parcel_qld", "v5_points_off_parcel", "v4_sites_off_parcel",
-  "re_version", "tower_to_core_centre_m"),
+  "re_version", "tower_to_core_centre_m", "access_barrier", "reachable_ha",
+  "hectares_beyond_barrier", "n_backups", "backups_crossed_by_track"),
   value = c(
     round(boundary$mapped_area_ha, 1), round(boundary$lot_area_ha, 1), boundary$n_parts,
     nrow(nvis), length(strata), n_hect, cameras_per_hectare, sum(hectares$cameras),
@@ -495,14 +657,21 @@ summary_tab <- data.frame(quantity = c(
     round(sum(track_km$km[track_km$source == "QLD"]), 2),
     sum(is.na(v5_points$mvs_code)), sum(is.na(v4_sites$mvs_code)),
     paste(unique(re_preclear$version), collapse = "/"),
-    round(hectares$dist_tower_m[hectares$hectare_id == "CORE"])))
+    round(hectares$dist_tower_m[hectares$hectare_id == "CORE"]), access_barrier_name,
+    round(as.numeric(st_area(reachable_area)) / 1e4, 1), paste(at_risk, collapse = "/"),
+    nrow(backups), sum(backups$dist_track_m == 0)))
 write.csv(summary_tab, file.path(out_dir, sprintf("design_summary_%s.csv", design_version)),
           row.names = FALSE)
 
 ## the field table with coordinates (kept off GitHub by the *points* rule)
-write.csv(st_drop_geometry(hectares) |>
-            select(rank, hectare_id, mvs_name, centre_lat, centre_lon, cameras, dist_track_m,
-                   field_note),
+write.csv(rbind(st_drop_geometry(hectares) |>
+                  # the main hectares, in rank order
+                  transmute(status = "main", rank, hectare_id, replaces = NA, mvs_name,
+                            centre_lat, centre_lon, cameras, dist_track_m, field_note),
+                st_drop_geometry(backups) |>
+                  # then the backups, unranked, each naming the hectare it replaces
+                  transmute(status = "backup", rank = NA, hectare_id, replaces, mvs_name,
+                            centre_lat, centre_lon, cameras, dist_track_m, field_note)),
           file.path(out_dir, sprintf("%s_hectare_points_%s.csv", site_name, design_version)),
           row.names = FALSE)
 
@@ -526,6 +695,7 @@ deployments <- st_sf(
 ## this design's layer names carry its version, e.g. v7_hectares
 hect_layer <- paste0(design_version, "_hectares")
 guide_layer <- paste0(design_version, "_camera_guides")
+backup_layer <- paste0(design_version, "_backup_hectares")
 # every layer, in WGS84 as QField and Google Earth expect
 gpkg_layers <- list(
   boundary = boundary,
@@ -536,6 +706,8 @@ gpkg_layers <- list(
   v5_points = v5_points,
   hectares = hectares |> mutate(map_label = sprintf("%s (%d)", hectare_id, rank)),
   camera_guides = guides,
+  backup_hectares = backups |> mutate(map_label = sprintf("%s (for %s)", hectare_id, replaces)),
+  access_barrier = st_sf(name = access_barrier_name, geometry = st_union(st_geometry(barrier))),
   flux_tower = st_sf(name = "Flux tower", geometry = tower),
   a2o_recorders = a2o_recorders,
   deployments = deployments
@@ -543,6 +715,7 @@ gpkg_layers <- list(
 # rename the hectare and guide layers to carry the version
 names(gpkg_layers)[names(gpkg_layers) == "hectares"] <- hect_layer
 names(gpkg_layers)[names(gpkg_layers) == "camera_guides"] <- guide_layer
+names(gpkg_layers)[names(gpkg_layers) == "backup_hectares"] <- backup_layer
 # the deliverable: every layer in one GeoPackage at the top of outputs/
 gpkg_name <- sprintf("%s_%s.gpkg", site_name, design_version)
 gpkg <- file.path(out_dir, gpkg_name)
@@ -584,6 +757,8 @@ col_v4 <- "#E41A1C"
 col_v5 <- "#377EB8"
 col_hect <- "#000000"
 col_track <- "#FF7F00"
+col_backup <- "#D95F02"
+col_creek <- "#1F78B4"
 # write labels with a white halo so they read over imagery
 halo_text <- function(x, y, labels, cex = 0.7, col = "black", halo = "white", ...) {
   # draw the label slightly offset in eight directions in the halo colour
@@ -599,6 +774,9 @@ map_box <- st_bbox(st_buffer(boundary, 300))
 # hectare centre coordinates and labels
 cxy <- st_coordinates(centres)
 hect_labels <- sprintf("%s (%d)", hectares$hectare_id, hectares$rank)
+# backup centre coordinates and labels
+bxy <- st_coordinates(backup_centres)
+backup_labels <- sprintf("%s (for %s)", backups$hectare_id, backups$replaces)
 # the imagery
 img <- rast(cache_imagery)
 # the PDF, A4 landscape
@@ -627,6 +805,13 @@ plot(st_geometry(hectares), border = col_hect, lwd = 1.5, add = TRUE)
 points(cxy, pch = 22, cex = 1.6, lwd = 1.5, col = col_hect)
 # their labels
 halo_text(cxy[, 1], cxy[, 2], hect_labels, pos = 4, offset = 0.8, cex = 0.75, font = 2)
+# the creek that may close in the wet season
+plot(st_geometry(barrier), col = col_creek, lwd = 2.5, add = TRUE)
+# the backup hectares, dashed, with their own marker and labels
+plot(st_geometry(backups), border = col_backup, lwd = 1.5, lty = 2, add = TRUE)
+points(bxy, pch = 23, cex = 1.5, lwd = 1.5, col = col_backup)
+halo_text(bxy[, 1], bxy[, 2], backup_labels, pos = 4, offset = 0.8, cex = 0.7, font = 3,
+          col = col_backup)
 # the tower
 plot(tower, pch = 17, col = "navy", cex = 1.3, add = TRUE)
 # and the A2O recorders
@@ -642,11 +827,13 @@ legend("topleft", bty = "n", cex = 0.7, title = "NVIS subgroup", title.adj = 0,
        fill = sub_cols, border = NA, legend = sub_labels, y.intersp = 1.6)
 legend("bottomleft", bty = "n", cex = 0.8,
        legend = c("v4 grid site (30 cameras)", "v5 relocated point",
-                  paste(design_version, "hectare (rank)"), "Mapped track (OSM / QLD)",
+                  paste(design_version, "hectare (rank)"), "Backup hectare (for ...)",
+                  "Mapped track (OSM / QLD)", paste(access_barrier_name, "(wet-season barrier)"),
                   "Flux tower", "A2O site 61 recorder", "Cadastral parcel"),
-       pch = c(4, 2, 22, NA, 17, 8, NA), lty = c(NA, NA, NA, 1, NA, NA, 1),
-       col = c(col_v4, col_v5, col_hect, col_track, "navy", "purple", "grey20"),
-       lwd = c(1.5, 1.5, 1.5, 1.5, NA, NA, 1.5))
+       pch = c(4, 2, 22, 23, NA, NA, 17, 8, NA), lty = c(NA, NA, NA, NA, 1, 1, NA, NA, 1),
+       col = c(col_v4, col_v5, col_hect, col_backup, col_track, col_creek, "navy", "purple",
+               "grey20"),
+       lwd = c(1.5, 1.5, 1.5, 1.5, 1.5, 2.5, NA, NA, 1.5))
 layout(1)
 
 ### Page 2: the hectares over satellite imagery
@@ -665,32 +852,51 @@ plot(st_geometry(v5_points), pch = 2, col = "cyan", cex = 0.7, add = TRUE)
 plot(st_geometry(hectares), border = "yellow", lwd = 2, add = TRUE)
 halo_text(cxy[, 1], cxy[, 2], hect_labels, pos = 4, offset = 0.8, cex = 0.8, font = 2,
           col = "black", halo = "yellow")
+# the creek
+plot(st_geometry(barrier), col = "deepskyblue", lwd = 2, add = TRUE)
+# the backups, dashed orange, and their labels
+plot(st_geometry(backups), border = "orange", lwd = 2, lty = 2, add = TRUE)
+halo_text(bxy[, 1], bxy[, 2], backup_labels, pos = 4, offset = 0.8, cex = 0.75, font = 3,
+          col = "black", halo = "orange")
 # the tower
 plot(tower, pch = 17, col = "white", cex = 1.2, add = TRUE)
 # the A2O recorders
 plot(st_geometry(a2o_recorders), pch = 8, col = "magenta", cex = 1.1, lwd = 1.5, add = TRUE)
 mtext(paste0("Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community. Yellow: ",
-             design_version, " hectares; orange: OSM/QLD tracks; cyan triangles: v5 points ",
-             "(interpreted tracks); magenta stars: A2O recorders."),
+             design_version, " hectares; dashed orange: backups; orange: OSM/QLD tracks; ",
+             "blue: ", access_barrier_name, "; cyan triangles: v5 points (interpreted tracks); ",
+             "magenta stars: A2O recorders."),
       side = 1, line = 0.5, cex = 0.65)
 
-### Page 3: a close-up of each hectare, for checking tracks by eye
-n_panel <- nrow(hectares)
-par(mfrow = c(2, ceiling(n_panel / 2)))
+### Page 3: a close-up of each hectare and backup, for checking tracks by eye
+## the main hectares then the backups, in one set of panels
+panels <- rbind(hectares[, c("hectare_id", "mvs_code", "purity")],
+                backups[, c("hectare_id", "mvs_code", "purity")])
+# their centres
+pxy <- rbind(cxy, bxy)
+# a title for each: rank for main hectares, the replaced hectare for backups
+panel_titles <- c(sprintf("%s (rank %d)", hectares$hectare_id, hectares$rank),
+                  sprintf("%s (backup for %s)", backups$hectare_id, backups$replaces))
+# yellow outline for main hectares, orange for backups
+panel_border <- c(rep("yellow", nrow(hectares)), rep("orange", nrow(backups)))
+n_panel <- nrow(panels)
+par(mfrow = c(ceiling(n_panel / 3), 3))
 # for each hectare,
 for (i in seq_len(n_panel)) {
   # a 600 m window around its centre
-  win <- ext(cxy[i, 1] - 300, cxy[i, 1] + 300, cxy[i, 2] - 300, cxy[i, 2] + 300)
+  win <- ext(pxy[i, 1] - 300, pxy[i, 1] + 300, pxy[i, 2] - 300, pxy[i, 2] + 300)
   plotRGB(img, ext = win, mar = c(0.5, 0.5, 2.5, 0.5),
-          main = sprintf("%s (rank %d): %d%% MVS %d", hectares$hectare_id[i], hectares$rank[i],
-                         round(100 * hectares$purity[i]), hectares$mvs_code[i]))
+          main = sprintf("%s: %d%% MVS %d", panel_titles[i], round(100 * panels$purity[i]),
+                         panels$mvs_code[i]))
   # tracks and v5 points nearby
   plot(st_geometry(track_lines), col = col_track, lwd = 2, add = TRUE)
   plot(st_geometry(v5_points), pch = 2, col = "cyan", cex = 1.2, lwd = 2, add = TRUE)
+  # the creek, where it is in view
+  plot(st_geometry(barrier), col = "deepskyblue", lwd = 2, add = TRUE)
   # the hectare
-  plot(st_geometry(hectares[i, ]), border = "yellow", lwd = 2, add = TRUE)
+  plot(st_geometry(panels[i, ]), border = panel_border[i], lwd = 2, add = TRUE)
   # its guide points, the on-track one filled
-  g <- guides[guides$hectare_id == hectares$hectare_id[i], ]
+  g <- guides[guides$hectare_id == panels$hectare_id[i], ]
   plot(st_geometry(g), pch = ifelse(g$role == "on-track", 21, 1), bg = "yellow", col = "black",
        cex = 1.3, add = TRUE)
   # A2O recorders nearby, drawn last so the guides never hide them
@@ -720,7 +926,24 @@ plot_table_page(
     "unverified: confirm the subgroup and access on the ground."),
   max_chars = 34)
 
-### Page 5: the comparison of designs
+### Page 5: the backup field table
+plot_table_page(
+  st_drop_geometry(backups) |>
+    # give every column a readable heading for the page
+    transmute(Backup = hectare_id, `For` = replaces,
+              Subgroup = sprintf("%d %s", mvs_code, mvs_name),
+              `Purity %` = round(100 * purity),
+              `Centre lat` = sprintf("%.5f", centre_lat), `Centre long` = sprintf("%.5f", centre_lon),
+              `To track (m)` = dist_track_m, Cameras = cameras, `Field note` = field_note),
+  title = sprintf("Backups if %s cannot be crossed: use each in place of the hectare it is for",
+                  access_barrier_name),
+  footnote = paste(
+    "Each backup is on the tower side of the creek, in the subgroup given in the backup plan.",
+    "Backups were chosen on v5 points where one lies in that subgroup on the reachable side;",
+    "where none does, the purest square was chosen and its access must be confirmed."),
+  max_chars = 34)
+
+### Page 6: the comparison of designs
 comparison_page <- comparison |>
   # give every column a readable heading for the page
   transmute(Subgroup = ifelse(is.na(mvs_code), subgroup, sprintf("%d %s", mvs_code, subgroup)),
@@ -743,7 +966,7 @@ plot_table_page(
     " cameras."),
   max_chars = 40)
 
-### Page 6: distances between hectares
+### Page 7: distances between hectares
 plot_table_page(
   hect_dist |> transmute(From = from, To = to,
                          `Same subgroup` = ifelse(same_subgroup, "yes", ""), `Distance (m)` = dist_m),
@@ -780,7 +1003,8 @@ qgis_layers <- list(
                       fill = "#33A02C", outline = "#000000"),
                  label_field = "deployment_id", read_only = FALSE,
                  field_defaults = c(recorded_at = "now()"),
-                 value_maps = list(hectare_id = hectares$hectare_id, guide_id = guides$guide_id)),
+                 value_maps = list(hectare_id = c(hectares$hectare_id, backups$hectare_id),
+                                   guide_id = guides$guide_id)),
   # the flux tower and the A2O recorders, labelled by name
   qgis_layer_xml("flux_tower", "Flux tower", src("flux_tower"), crs_ll,
                  list(kind = "single", geom = "marker", shape = "triangle", size = 5,
@@ -799,6 +1023,17 @@ qgis_layers <- list(
                                               shape = "circle", size = 3, outline_width = 0.4)),
                  label_field = "guide_id"),
   # the hectares, outlined and labelled with ID and rank
+  # the backups, dashed orange, labelled with the hectare each replaces
+  qgis_layer_xml(backup_layer, paste0("Backup hectares (if ", access_barrier_name, " is closed)"),
+                 src(backup_layer), crs_ll,
+                 list(kind = "single", geom = "fill", fill = NULL, outline = col_backup,
+                      outline_style = "dash", outline_width = 0.8),
+                 geometry = "Polygon", label_field = "map_label"),
+  # the creek that may close in the wet season
+  qgis_layer_xml("access_barrier", paste(access_barrier_name, "(wet-season barrier)"),
+                 src("access_barrier"), crs_ll,
+                 list(kind = "single", geom = "line", outline = col_creek, outline_width = 1.2),
+                 geometry = "Line"),
   qgis_layer_xml(hect_layer, paste(design_version, "hectares (ID (rank))"), src(hect_layer), crs_ll,
                  list(kind = "single", geom = "fill", fill = "#FFFF33", alpha = 60,
                       outline = "#000000", outline_width = 0.8),

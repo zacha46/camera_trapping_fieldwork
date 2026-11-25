@@ -15,10 +15,12 @@ write, not in this file:
 - `outputs/design_summary_v4.csv` — scale, site counts by status, cameras for
   backups, MCP areas against the target, the FV04 move, extents (earlier designs have
   their own `design_summary_vN.csv`)
-- `outputs/design_summary_v7.csv`, `nvis_areas_v7.csv`, `design_comparison_v7.csv`,
-  `design_mcp_v7.csv`, `hectares_v7.csv` and `hectare_distances_v7.csv` — the current
-  hectare design: parcel areas, subgroup areas, hectare purity and spacing, the A2O
-  hectares, and the comparison with v4 and v5. The v6 tables are in `outputs/OLD/`.
+- `outputs/design_summary_v8.csv`, `nvis_areas_v8.csv`, `design_comparison_v8.csv`,
+  `design_mcp_v8.csv`, `hectares_v8.csv`, `backup_hectares_v8.csv` and
+  `hectare_distances_v8.csv` — the current hectare design: parcel areas, subgroup areas
+  (whole parcel and the side reachable in the wet), hectare purity and spacing, the A2O
+  hectares, the backups, and the comparison with v4 and v5. The v6 and v7 tables are in
+  `outputs/OLD/`.
 
 ## How to run
 
@@ -41,7 +43,7 @@ dry run first.
 
 The hectare scripts (04 and 05) read every site-specific value from
 `v6_site_config.R`, which is named for the method introduced in v6; its
-`design_version` sets the version the outputs carry, now v7. To run the hectare design
+`design_version` sets the version the outputs carry, now v8. To run the hectare design
 at another TERN SuperSite, copy that file and the two scripts into the new campaign and
 change the config.
 
@@ -164,10 +166,12 @@ the QTopo basemap with legends for camera status, every map layer and the marker
 v6 replaces the grid with 1 ha plots (100 × 100 m) stratified by vegetation. Within a
 plot the cameras are not independent: the plot, not the camera, is the sampling unit,
 and cameras go on features chosen in the field. v7 keeps every v6 rule and changes only
-the A2O hectares (see "Design v7" below). The PDF `outputs/fletcherview_v7.pdf` holds
-the maps, a close-up of each hectare over satellite imagery, the hectare table and the
-comparison with v4 and v5. `outputs/qfield_v7/` (zipped as `qfield_v7.zip`) is the
-matching QField project. The v6 PDF and QField project are in `outputs/OLD/`.
+the A2O hectares (see "Design v7" below); v8 adds backup hectares for the hectares
+beyond Lolworth Creek (see "Design v8"). The PDF `outputs/fletcherview_v8.pdf` holds
+the maps, a close-up of each hectare and backup over satellite imagery, the hectare and
+backup tables and the comparison with v4 and v5. `outputs/qfield_v8/` (zipped as
+`qfield_v8.zip`) is the matching QField project. Earlier PDFs and QField projects are
+in `outputs/OLD/`.
 
 **Caveat.** The state and national layers are coarse (NVIS is mapped on a 100 m grid)
 and the tracks are unverified. Confirm each hectare's vegetation subgroup and its
@@ -217,7 +221,7 @@ each design's minimum convex polygon.
 ## Design v7: A2O hectares on the wet-season recorders
 
 v6 placed one A2O hectare on a point for A2O site 61 that turned out to sit on the
-station buildings (`v6_a2o_point_to_station_m` in `design_summary_v7.csv`). v7 places
+station buildings (`v6_a2o_point_to_station_m` in `design_summary_v8.csv`). v7 places
 the A2O hectares on handheld GPS fixes of the site's four recorders
 (`data/raw/GPS_fletcher_values.csv`, rows with `point_type` "sensor"). The recorders
 are two wet–dry pairs, A and B. Cameras run through the wet season, so the two wet
@@ -228,13 +232,40 @@ recorders each anchor a hectare:
 | `A2O-A` | Acoustic wet A | the second replicate of its subgroup, with the core plot |
 | `A2O-B` | Acoustic wet B | the first replicate of its subgroup; the second is chosen by the v6 rules |
 
-The subgroups are in `hectares_v7.csv`. Each A2O hectare is the 100 m square that
+The subgroups are in `hectares_v8.csv`. Each A2O hectare is the 100 m square that
 contains its recorder, chosen as in v6: crossed by a track if possible, then purest,
 then nearest a track. No track crosses either (`a2o_hectares_crossed_by_track` and
 `a2o_min_dist_track_m` in the design summary), so both are exempt from the access rule
 like the core plot, and their field note says to walk in on the route the A2O team uses
 to service the recorder. The four recorders are drawn on every map, labelled by name.
 The hectare count, cameras per hectare and camera budget are unchanged.
+
+## Design v8: backups for the hectares beyond Lolworth Creek
+
+Lolworth Creek crosses the northern part of the parcel from west to east, and reaching
+its far side from the station means crossing it. Into the wet season the crossing may
+close. `05_design_hectares.R` cuts the parcel along the creek's mapped line (QLD
+hydrography) and treats as reachable, in each parcel part, the piece nearest the flux
+tower. Main hectares outside the reachable side are at risk (`hectares_beyond_barrier`
+in `design_summary_v8.csv`), and each has a backup on the reachable side:
+
+| At risk | Backup subgroup | Chosen on |
+|---|---|---|
+| MVS09-B | 9, same as the hectare it replaces | a v5 point, about 1 km from the nearest reachable subgroup-9 hectare |
+| MVS37-A | 37, same as the hectare it replaces | the purest reachable square; no v5 point lies in subgroup 37 on the reachable side |
+| MVS37-B | 9, a second reachable subgroup-9 hectare | a v5 point, spaced as above |
+
+The plan lives in `backup_plan` in `v6_site_config.R`. Backups are chosen by the same
+lattice, purity and spacing rules as the main hectares, but only v5 points count as
+tracks, and the subgroup-37 backup has no track rule. The chosen hectares, their v5
+points and spacing are in `backup_hectares_v8.csv`; the subgroup area on the reachable
+side is the `reachable_km2` column of `nvis_areas_v8.csv`.
+
+The main design is unchanged. A backup is used only if the crossing is closed on the
+day, in place of the hectare it is for, and with the same cameras. Each at-risk
+hectare's field note names its backup, and each backup's note names the hectare it
+replaces. The backups are their own dashed layer in QField and the PDF, and the
+deployments drop-down lists their IDs. The creek is drawn on every map.
 
 ## Decisions log
 
@@ -344,7 +375,29 @@ bumps to v7 and the v6 outputs move to `outputs/OLD/`. The two A2O hectares are 
 than the v6 A2O hectare, but the design's MCP is smaller and the subgroup-19 replicates
 are further apart than the target (`design_mcp_v7.csv`, `hectare_distances_v7.csv`).
 
+**2026-11-25 — v8: backups for the hectares beyond Lolworth Creek (ZDA with Claude
+Code).** ZDA flagged that the creek just north of A2O-A must be crossed to reach the
+subgroup-37 band and the northern subgroup-9 block, and may not be passable into the
+wet season. Splitting the parcel at Lolworth Creek confirmed the three hectares ZDA
+named (MVS09-B, MVS37-A, MVS37-B) are the only ones beyond it. ZDA suggested moving
+MVS09-B to the southern end of the property in the same subgroup, on a v5 point; the
+backup rules picked exactly that. Very little subgroup 37 is reachable, and the only
+place a pure hectare fits is a narrow NVIS strip beside v5 point FV28. ZDA chose one
+subgroup-37 backup there, flagged for checking on the ground, with MVS37-B's cameras
+going to a second reachable subgroup-9 hectare. Two subgroup-37 hectares in the strip
+would have sat 150 m apart, and the imagery does not show the strip as distinct from
+the woodland around it. ZDA chose backups used only if the crossing is closed, over
+replacing the at-risk hectares outright. `select_hectares()` gained a `require_track`
+switch for that backup, and now stops instead of returning empty hectares when the
+candidates cannot be spaced without overlapping. The version bumps to v8 and the v7
+outputs move to `outputs/OLD/`.
+
 ## Open questions
+
+- **v8: if the creek closes, subgroup 37 drops to one hectare** in a strip NVIS may
+  have mapped wrongly, and subgroup 9 rises to three hectares. Confirm the strip is
+  tussock grassland before relying on it. A2O-B sits on the reachable side but next to
+  the creek; check that its own access does not cross it.
 
 - **v7: A2O recorders sit on the hectare edge.** Each A2O square contains its recorder,
   but the rule that picks the square (purity, then track distance) leaves both
@@ -352,7 +405,7 @@ are further apart than the target (`design_mcp_v7.csv`, `hectare_distances_v7.cs
   recorder, or keep the rule.
 - **v7: replicate spacing.** The core plot and A2O-A, the two subgroup-19 hectares, are
   well beyond the 1 km spacing target, and MVS09-B is placed against A2O-B
-  (`hectare_distances_v7.csv`). MVS09-B also sits next to a river channel on the
+  (`hectare_distances_v8.csv`). MVS09-B also sits next to a river channel on the
   imagery; check its wet-season access with the other riverside hectares.
 
 - **FV03 gets a camera but sits inside the Burdekin channel.** Ranked by coverage,
@@ -364,15 +417,15 @@ are further apart than the target (`design_mcp_v7.csv`, `hectare_distances_v7.cs
   roughly 100–200 m there. The cadastral parcel is now fetched for v6
   (`04_fetch_v6_layers.R`); the v4 sites off it are counted in
   `design_comparison_v6.csv`. Rebuilding v4 on the parcel is not yet done.
-- **v6/v7: water and the riverside hectares.** The hectare design has no water rule.
+- **v6–v8: water and the riverside hectares.** The hectare design has no water rule.
   Both tussock-grassland hectares sit beside creek lines, because that subgroup follows
   the watercourses. Check wet-season access before deploying them.
 - **EpiCollect: location ID format and deployment group.** The live form's example is
-  `FV12_20261125`, a v4 grid name plus date, while v7 cameras sit in hectares
+  `FV12_20261125`, a v4 grid name plus date, while v8 cameras sit in hectares
   (`MVS09-B`, `A2O-A`). The ID format, whether the script should check IDs against the v6
   design, and the WIMP group label (`Fletcherview_2026-11` for now) are to confirm
   before the first post.
-- **v6/v7: spare cameras.** Options: a fifth camera in some hectares, or a seventh
+- **v6–v8: spare cameras.** Options: a fifth camera in some hectares, or a seventh
   hectare (for example in the cleared class, which falls just short of a stratum).
 
 ## Design notes from the v1 chat session

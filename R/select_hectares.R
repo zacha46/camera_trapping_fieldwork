@@ -27,13 +27,16 @@
 #' @param lattice_m numeric. Spacing of candidate centres, metres.
 #' @param min_purity numeric. Purity a candidate should reach, 0 to 1.
 #' @param target_spacing_m numeric. Wanted distance between replicates, metres.
+#' @param require_track logical. If `FALSE`, rule 1 drops its track condition, so any
+#'   square wholly inside the property is a candidate; `tracks` is then unused. Use it
+#'   only where a subgroup has no track and access is checked another way.
 #' @return sf of `n_needed` squares with columns `mvs_code`, `purity`,
 #'   `meets_min_purity` and `dist_origin_m`. Hard `stop()`s if fewer than `n_needed`
 #'   candidates exist.
 #' @author Zachary Amir
 select_hectares <- function(boundary, nvis, tracks, subgroup_code, n_needed, origin,
                             existing = NULL, size_m = 100, lattice_m = 25, min_purity = 0.75,
-                            target_spacing_m = 1000) {
+                            target_spacing_m = 1000, require_track = TRUE) {
   # if the boundary is in degrees,
   if (sf::st_is_longlat(boundary)) {
     # stop because the lattice is laid out in metres
@@ -65,23 +68,26 @@ select_hectares <- function(boundary, nvis, tracks, subgroup_code, n_needed, ori
   centre_pts <- sf::st_as_sf(centres, coords = c("x", "y"), crs = sf::st_crs(boundary), remove = FALSE)
 
   ## keep centres close enough to a track that the square could touch it
-  # a square reaches at most half a diagonal (~71 m for 100 m) from its centre
-  near <- lengths(sf::st_is_within_distance(centre_pts, tracks, dist = size_m / sqrt(2))) > 0
-  centres <- centres[near, ]
-  # if no centre is near a track,
-  if (nrow(centres) == 0) {
-    # stop because no square can meet the access rule
-    stop("select_hectares found no candidate square near any track.\n",
-         "Check that the tracks layer overlaps the property.")
-  } # end near check
+  # if the access rule applies,
+  if (require_track) {
+    # a square reaches at most half a diagonal (~71 m for 100 m) from its centre
+    near <- lengths(sf::st_is_within_distance(centre_pts, tracks, dist = size_m / sqrt(2))) > 0
+    centres <- centres[near, ]
+    # if no centre is near a track,
+    if (nrow(centres) == 0) {
+      # stop because no square can meet the access rule
+      stop("select_hectares found no candidate square near any track.\n",
+           "Check that the tracks layer overlaps the property.")
+    } # end near check
+  } # end access rule condition
 
   # build the candidate squares
   cand <- sf::st_sf(centres, geometry = make_hectare_squares(centres$x, centres$y,
                                                              sf::st_crs(boundary), size_m))
   # keep squares wholly inside the property
   cand <- cand[lengths(sf::st_within(cand, prop)) > 0, ]
-  # keep squares a track feature actually crosses
-  cand <- cand[lengths(sf::st_intersects(cand, tracks)) > 0, ]
+  # keep squares a track feature actually crosses, if the access rule applies
+  if (require_track) cand <- cand[lengths(sf::st_intersects(cand, tracks)) > 0, ]
   # drop squares that overlap a hectare already placed
   if (!is.null(existing) && nrow(existing) > 0) {
     cand <- cand[lengths(sf::st_intersects(cand, existing)) == 0, ]
@@ -135,6 +141,12 @@ select_hectares <- function(boundary, nvis, tracks, subgroup_code, n_needed, ori
     pairs <- which(upper.tri(d), arr.ind = TRUE)
     # keep pairs far enough apart that the squares cannot overlap
     pairs <- pairs[d[pairs] >= size_m * sqrt(2), , drop = FALSE]
+    # if no two candidates are far enough apart,
+    if (nrow(pairs) == 0) {
+      # stop because two hectares here would overlap
+      stop("select_hectares: every pair of candidates for subgroup ", subgroup_code,
+           " overlaps.\nAdd tracks in this subgroup, relax the access rule, or ask for one hectare.")
+    } # end pair check
     # score each pair: closeness to the target spacing, in 100 m steps
     off <- round(abs(d[pairs] - target_spacing_m) / 100)
     # then mean purity, highest first
@@ -158,6 +170,13 @@ select_hectares <- function(boundary, nvis, tracks, subgroup_code, n_needed, ori
       if (length(chosen) > 0) {
         free <- free[lengths(sf::st_intersects(cand[free, ], cand[chosen, ])) == 0]
       } # end overlap condition
+      # if no candidate is left,
+      if (length(free) == 0) {
+        # stop because the next hectare would overlap one already chosen
+        stop(sprintf("select_hectares placed %d of %d hectares for subgroup %d; the rest overlap.",
+                     length(chosen), n_needed, subgroup_code),
+             "\nAdd tracks in this subgroup, relax the access rule, or ask for fewer hectares.")
+      } # end free check
       # if no replicate is placed yet, spacing cannot be scored
       if (length(placed) == 0) {
         # so take the purest, nearest the origin

@@ -8,7 +8,7 @@
 ## SuperSite, copy this file into that campaign and change the values below.
 
 ## design version stamped on every output file and layer name
-design_version <- "v7"
+design_version <- "v8"
 # short site name used in output file names
 site_name <- "fletcherview"
 # where this campaign lives
@@ -79,6 +79,20 @@ lattice_m <- 25
 min_purity <- 0.75
 # wanted distance between hectares of the same subgroup, metres
 target_spacing_m <- 1000
+
+### Wet-season access: a creek that may cut off part of the property
+## hectares on the far side of this mapped creek from the flux tower get a backup
+access_barrier_name <- "Lolworth Creek"
+# the cached QLD hydrography that holds the creek line
+hydro_cache <- file.path(campaign_dir, "data", "processed", "qld_hydrography.gpkg")
+### Which backup replaces which hectare beyond the creek? (ZDA, 2026-11-25)
+## each backup is in the subgroup given here, on the reachable side; needs_track FALSE
+## drops the access rule, for a subgroup with no v5 point on the reachable side
+backup_plan <- data.frame(
+  replaces = c("MVS09-B", "MVS37-A", "MVS37-B"), # the hectare beyond the creek
+  mvs_code = c(9, 37, 9),                        # subgroup the backup samples
+  needs_track = c(TRUE, FALSE, TRUE)             # must a v5 point lie in it?
+) # end backup plan
 
 ### Earlier designs to compare against
 v4_gpkg_path <- file.path(campaign_dir, "outputs", "OLD", "qfield_v4", "fletcherview_design_v4.gpkg")
