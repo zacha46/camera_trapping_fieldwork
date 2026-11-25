@@ -1,20 +1,22 @@
-### Choose the v6 hectare design and compare it with the v4 and v5 grids
+### Choose the stratified hectare design and compare it with the v4 and v5 grids
 ## 25 November 2026, Fletcherview Research Station, QLD
 # Zachary Amir
 
 ### Stratified hectares instead of a grid:
 ## The property is split into NVIS vegetation subgroups; every subgroup covering at least
-## 1 km2 is a stratum and gets two 1 ha plots (100 x 100 m). The TERN core plot and the
-## Australian Acoustic Observatory (A2O) site are fixed hectares and count towards their
-## subgroup. Every other hectare is crossed by a track, as pure in its subgroup as
-## possible, and about 1 km from its replicate. Cameras within a hectare are placed in
-## the field on features; this script gives only nominal edge-midpoint guides.
+## 1 km2 is a stratum and gets two 1 ha plots (100 x 100 m). The TERN core plot and one
+## hectare on each wet-season Australian Acoustic Observatory (A2O) recorder are fixed
+## hectares and count towards their subgroup. Every other hectare is crossed by a track,
+## as pure in its subgroup as possible, and about 1 km from its replicate. Cameras within
+## a hectare are placed in the field on features; this script gives only nominal
+## edge-midpoint guides.
 
 ### Inputs and outputs:
-## Reads the layers cached by 04_fetch_v6_layers.R and the v4 QField GeoPackage. Writes
-## to outputs/: fletcherview_v6.gpkg, fletcherview_v6.pdf, a QField folder, a hectare
-## points CSV, and the tracked summary tables quoted by the campaign README.
-## Settings live in v6_site_config.R.
+## Reads the layers cached by 04_fetch_v6_layers.R, the A2O recorder GPS fixes, the v4
+## QField GeoPackage and the v6 GeoPackage. Writes to outputs/, each name carrying the
+## design version: a GeoPackage, a PDF, a QField folder, a hectare points CSV, and the
+## tracked summary tables quoted by the campaign README. Settings live in
+## v6_site_config.R.
 
 
 ## Load libraries
@@ -69,8 +71,33 @@ re_remnant <- read_layer("re_remnant")
 ## the fixed points, in UTM
 # the flux tower
 tower <- st_transform(st_sfc(st_point(c(tower_lon, tower_lat)), crs = 4326), crs_utm)
-# the A2O site
-a2o <- st_transform(st_sfc(st_point(c(a2o_lon, a2o_lat)), crs = 4326), crs_utm)
+
+## the A2O recorders and the station, from the handheld GPS fixes
+# if the GPS file is missing,
+if (!file.exists(a2o_gps_path)) {
+  # stop because the A2O hectares are placed on these fixes
+  stop("No A2O GPS file at ", a2o_gps_path, "\n",
+       "Put GPS_fletcher_values.csv in data/raw/ (see data/raw/README.md).")
+} # end GPS file check
+gps_fixes <- read.csv(a2o_gps_path) |>
+  # turn the fixes into points
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  # in UTM, so distances are in metres
+  st_transform(crs_utm)
+a2o_recorders <- gps_fixes |>
+  # keep the acoustic recorders only
+  filter(point_type == "sensor") |>
+  # name each one and flag those that anchor a hectare
+  transmute(name = title, anchors_hectare = title %in% a2o_anchor_titles)
+# grab the station buildings, to measure how far the v6 A2O point sat from them
+station <- st_geometry(gps_fixes[gps_fixes$point_type == "station", ])
+# if any anchoring recorder named in the config is not in the GPS file,
+if (sum(a2o_recorders$anchors_hectare) != length(a2o_anchor_titles)) {
+  # stop because a hectare would silently go missing
+  stop(sprintf("Found %d of the %d A2O recorders named in a2o_anchor_titles.",
+               sum(a2o_recorders$anchors_hectare), length(a2o_anchor_titles)),
+       "\nCheck the titles in v6_site_config.R against the 'title' column of ", a2o_gps_path)
+} # end recorder check
 
 
 #
@@ -145,7 +172,7 @@ track_km
 
 #
 ##
-### Place the fixed hectares: TERN core plot and A2O site ----
+### Place the fixed hectares: TERN core plot and A2O recorders ----
 
 ## a small helper: the subgroup covering most of a square, and its share
 dominant_subgroup <- function(square) {
@@ -165,23 +192,45 @@ core_geom <- make_hectare_squares(tower_xy[1, "X"],
 # its subgroup and purity
 core <- st_sf(dominant_subgroup(core_geom), geometry = core_geom)
 core$hectare_id <- "CORE"
+# what the core hectare is anchored on
+core$anchor <- "TERN core plot"
 
-## the A2O hectare: a square containing the A2O site, in the A2O site's own subgroup
-a2o_code <- st_join(st_sf(geometry = a2o), nvis[, "mvs_code"])$mvs_code
-# if the A2O site's subgroup is not a stratum,
-if (!a2o_code %in% strata) {
-  # warn, because it is placed anyway but will not stand in for a stratum
-  warning("The A2O site falls in subgroup ", a2o_code, ", which is not a stratum; ",
-          "its hectare is placed but does not replace a stratum replicate.")
+## one A2O hectare per anchoring recorder, each in that recorder's own subgroup
+a2o_anchors <- a2o_recorders[a2o_recorders$anchors_hectare, ]
+# grab the subgroup under each recorder
+a2o_anchors$mvs_code <- st_join(a2o_anchors[, "name"], nvis[, "mvs_code"])$mvs_code
+# if any recorder's subgroup is not a stratum,
+if (any(!a2o_anchors$mvs_code %in% strata)) {
+  # warn, because its hectare is placed anyway but will not stand in for a stratum
+  warning("An A2O recorder falls in a subgroup that is not a stratum (",
+          paste(a2o_anchors$mvs_code[!a2o_anchors$mvs_code %in% strata], collapse = ", "),
+          "); its hectare is placed but does not replace a stratum replicate.")
 } # end A2O stratum check
-# slide a square around the site, preferring one crossed by a track
-a2o_hect <- anchor_hectare(a2o, boundary, nvis, tracks, a2o_code, hectare_size_m)
-a2o_hect$hectare_id <- "A2O"
+# init a list to hold the A2O hectares
+a2o_list <- list()
+# for each anchoring recorder,
+for (i in seq_len(nrow(a2o_anchors))) {
+  # slide a square around it, preferring one crossed by a track
+  a2o_list[[i]] <- anchor_hectare(st_geometry(a2o_anchors)[i], boundary, nvis, tracks,
+                                  a2o_anchors$mvs_code[i], hectare_size_m)
+  # name it after the recorder's letter, so "Acoustic wet A" gives A2O-A
+  a2o_list[[i]]$hectare_id <- paste0("A2O-", sub(".*\\s", "", a2o_anchors$name[i]))
+  # and record which recorder it holds
+  a2o_list[[i]]$anchor <- a2o_anchors$name[i]
+} # end per recorder
+# stack them into one layer
+a2o_hect <- do.call(rbind, a2o_list)
 
 ## the fixed hectares together
-fixed <- rbind(core[, c("hectare_id", "mvs_code", "purity")],
-               a2o_hect[, c("hectare_id", "mvs_code", "purity")])
-# view them, expecting both in the largest stratum
+fixed <- rbind(core[, c("hectare_id", "mvs_code", "purity", "anchor")],
+               a2o_hect[, c("hectare_id", "mvs_code", "purity", "anchor")])
+# if any two fixed hectares touch or overlap,
+if (any(lengths(st_intersects(fixed)) > 1)) {
+  # stop because two fixed plots would sample the same ground
+  stop("Two fixed hectares overlap: ", paste(fixed$hectare_id, collapse = ", "), ".\n",
+       "Check the A2O recorder fixes and the core plot placement in v6_site_config.R.")
+} # end overlap check
+# view them, expecting CORE and A2O-A in subgroup 19 and A2O-B in subgroup 9
 st_drop_geometry(fixed)
 
 
@@ -205,8 +254,10 @@ for (s in strata) {
                            min_purity = min_purity, target_spacing_m = target_spacing_m)
   # name them by subgroup code and letter, e.g. MVS09-A
   picks$hectare_id <- sprintf("MVS%02d-%s", s, LETTERS[n_have + seq_len(n_need)])
+  # they are chosen by the rules, not anchored on anything
+  picks$anchor <- NA_character_
   # add them to the design
-  hectares <- rbind(hectares, picks[, c("hectare_id", "mvs_code", "purity")])
+  hectares <- rbind(hectares, picks[, c("hectare_id", "mvs_code", "purity", "anchor")])
 } # end per stratum
 
 
@@ -280,7 +331,11 @@ hectares$field_note <- paste0(
   case_when(
     hectares$hectare_id == "CORE" & core_plot_is_placeholder ~
       "Placeholder square: lay out on the TERN plot pegs. ",
-    hectares$hectare_id == "A2O" ~ "Contains A2O site 61: confirm recorder positions. ",
+    grepl("^A2O-", hectares$hectare_id) & hectares$dist_track_m > 0 ~
+      paste0("Contains A2O recorder '", hectares$anchor,
+             "'. No mapped track: walk in on the A2O servicing route. "),
+    grepl("^A2O-", hectares$hectare_id) ~
+      paste0("Contains A2O recorder '", hectares$anchor, "'. "),
     grepl("v5_point_proxy", hectares$track_source) & hectares$dist_track_m == 0 ~
       "Track inferred from a v5 point: confirm it is drivable. ",
     TRUE ~ ""),
@@ -309,7 +364,7 @@ guides$lon <- round(guide_ll[, "X"], 5)
 
 #
 ##
-### Compare v4, v5 and v6 by subgroup ----
+### Compare v4, v5 and this design by subgroup ----
 
 ## the v4 grid as deployed with 30 cameras: footprint and main, plus the top backups
 v4_all <- st_read(v4_gpkg_path, layer = "planned_points", quiet = TRUE) |> st_transform(crs_utm)
@@ -327,7 +382,7 @@ point_subgroup <- function(pts) st_join(st_sf(geometry = st_geometry(pts)), nvis
 v4_sites$mvs_code <- point_subgroup(v4_sites)
 v5_points$mvs_code <- point_subgroup(v5_points)
 
-## count sites (and v6 cameras) per subgroup, with a row for sites off the property
+## count sites (and this design's cameras) per subgroup, with a row for sites off the property
 # every subgroup on the property, plus one key for "off the property"
 keys <- c(nvis$mvs_code, NA)
 # count a vector of subgroup codes against those keys
@@ -346,23 +401,24 @@ comparison <- data.frame(
   v4_cameras = count_by(v4_sites$mvs_code),
   # v5 relocated points
   v5_cameras = count_by(v5_points$mvs_code),
-  # v6 hectares, and the cameras in them
-  v6_hectares = count_by(hectares$mvs_code),
-  v6_cameras = count_by(hectares$mvs_code, hectares$cameras)
+  # this design's hectares, and the cameras in them (renamed to the version when written)
+  this_hectares = count_by(hectares$mvs_code),
+  this_cameras = count_by(hectares$mvs_code, hectares$cameras)
 ) # end comparison table
-# shares of sampled sites (v6 sites are hectares)
+# shares of sampled sites (this design's sites are hectares)
 comparison$v4_site_pct <- round(100 * comparison$v4_cameras / sum(comparison$v4_cameras), 1)
 comparison$v5_site_pct <- round(100 * comparison$v5_cameras / sum(comparison$v5_cameras), 1)
-comparison$v6_site_pct <- round(100 * comparison$v6_hectares / sum(comparison$v6_hectares), 1)
+comparison$this_site_pct <- round(100 * comparison$this_hectares / sum(comparison$this_hectares), 1)
 # drop the off-parcel row if nothing falls there
 comparison <- comparison[!(is.na(comparison$mvs_code) & comparison$v4_cameras == 0 &
-                             comparison$v5_cameras == 0 & comparison$v6_hectares == 0), ]
+                             comparison$v5_cameras == 0 & comparison$this_hectares == 0), ]
 # view it
 comparison
 
 ## area covered by each design: minimum convex polygon (MCP), km2
 mcp_km2 <- function(g) round(as.numeric(st_area(st_convex_hull(st_union(g)))) / 1e6, 2)
-mcp <- data.frame(design = c("v4 grid (30 cameras)", "v5 relocated points", "v6 hectares"),
+mcp <- data.frame(design = c("v4 grid (30 cameras)", "v5 relocated points",
+                             paste(design_version, "hectares")),
                   sites = c(nrow(v4_sites), nrow(v5_points), nrow(hectares)),
                   cameras = c(nrow(v4_sites), nrow(v5_points), sum(hectares$cameras)),
                   mcp_km2 = c(mcp_km2(v4_sites), mcp_km2(v5_points), mcp_km2(hectares)))
@@ -379,9 +435,12 @@ write.csv(st_drop_geometry(nvis) |>
             select(mvs_code, mvs_name, area_km2, area_pct, eligible),
           file.path(out_dir, sprintf("nvis_areas_%s.csv", design_version)), row.names = FALSE)
 
-## the comparison of designs, with the MCPs below the subgroup rows in their own file
-write.csv(comparison, file.path(out_dir, sprintf("design_comparison_%s.csv", design_version)),
+## the comparison of designs, with this design's columns named after its version
+comparison_out <- comparison
+names(comparison_out) <- sub("^this_", paste0(design_version, "_"), names(comparison_out))
+write.csv(comparison_out, file.path(out_dir, sprintf("design_comparison_%s.csv", design_version)),
           row.names = FALSE)
+# and the MCPs in their own file
 write.csv(mcp, file.path(out_dir, sprintf("design_mcp_%s.csv", design_version)), row.names = FALSE)
 
 ## distances between every pair of hectares
@@ -402,19 +461,36 @@ hect_table <- st_drop_geometry(hectares) |>
 write.csv(hect_table, file.path(out_dir, sprintf("hectares_%s.csv", design_version)),
           row.names = FALSE)
 
+## how far the v6 A2O point sat from the station and from the recorders now used
+# if the v6 GeoPackage is missing,
+if (!file.exists(v6_gpkg_path)) {
+  # stop because the v6 A2O point cannot be compared
+  stop("No v6 GeoPackage at ", v6_gpkg_path, "\n",
+       "Restore outputs/OLD/fletcherview_v6.gpkg from git, or fix v6_gpkg_path in v6_site_config.R.")
+} # end v6 file check
+# read the single A2O point the v6 design was built on
+v6_a2o <- st_read(v6_gpkg_path, layer = "a2o_site", quiet = TRUE) |> st_transform(crs_utm)
+# its distance to the station buildings
+v6_a2o_to_station_m <- round(min(as.numeric(st_distance(v6_a2o, station))))
+# and to the nearest anchoring recorder
+v6_a2o_to_anchor_m <- round(min(as.numeric(st_distance(v6_a2o, a2o_anchors))))
+
 ## every other quotable number
 summary_tab <- data.frame(quantity = c(
   "parcel_mapped_ha", "parcel_registered_ha", "parcel_parts", "nvis_subgroups_on_parcel",
   "n_strata", "n_hectares", "cameras_per_hectare", "cameras_used", "cameras_spare",
-  "core_plot_placeholder", "a2o_subgroup", "a2o_hectare_crossed_by_track",
+  "core_plot_placeholder", "a2o_hectares", "a2o_subgroups", "a2o_hectares_crossed_by_track",
+  "a2o_min_dist_track_m", "v6_a2o_point_to_station_m", "v6_a2o_point_to_nearest_anchor_m",
   "min_purity_pct", "lowest_hectare_purity_pct", "track_km_on_parcel_osm",
   "track_km_on_parcel_qld", "v5_points_off_parcel", "v4_sites_off_parcel",
   "re_version", "tower_to_core_centre_m"),
   value = c(
     round(boundary$mapped_area_ha, 1), round(boundary$lot_area_ha, 1), boundary$n_parts,
     nrow(nvis), length(strata), n_hect, cameras_per_hectare, sum(hectares$cameras),
-    camera_budget - sum(hectares$cameras), core_plot_is_placeholder, a2o_code,
-    a2o_hect$crossed_by_track, round(100 * min_purity), round(100 * min(hectares$purity)),
+    camera_budget - sum(hectares$cameras), core_plot_is_placeholder, nrow(a2o_hect),
+    paste(a2o_hect$mvs_code, collapse = "/"), sum(a2o_hect$crossed_by_track),
+    round(min(a2o_hect$dist_track_m)), v6_a2o_to_station_m, v6_a2o_to_anchor_m,
+    round(100 * min_purity), round(100 * min(hectares$purity)),
     round(sum(track_km$km[track_km$source == "OSM"]), 2),
     round(sum(track_km$km[track_km$source == "QLD"]), 2),
     sum(is.na(v5_points$mvs_code)), sum(is.na(v4_sites$mvs_code)),
@@ -447,7 +523,10 @@ deployments <- st_sf(
   geometry = st_sfc(st_point(c(tower_lon, tower_lat)), crs = 4326)
 )[0, ] # end deployments layer
 
-## every layer, in WGS84 as QField and Google Earth expect
+## this design's layer names carry its version, e.g. v7_hectares
+hect_layer <- paste0(design_version, "_hectares")
+guide_layer <- paste0(design_version, "_camera_guides")
+# every layer, in WGS84 as QField and Google Earth expect
 gpkg_layers <- list(
   boundary = boundary,
   nvis_subgroups = nvis,
@@ -455,12 +534,15 @@ gpkg_layers <- list(
   tracks = tracks,
   v4_grid = v4_all,
   v5_points = v5_points,
-  v6_hectares = hectares |> mutate(map_label = sprintf("%s (%d)", hectare_id, rank)),
-  v6_camera_guides = guides,
+  hectares = hectares |> mutate(map_label = sprintf("%s (%d)", hectare_id, rank)),
+  camera_guides = guides,
   flux_tower = st_sf(name = "Flux tower", geometry = tower),
-  a2o_site = st_sf(name = "A2O site 61", geometry = a2o),
+  a2o_recorders = a2o_recorders,
   deployments = deployments
 ) # end layer list
+# rename the hectare and guide layers to carry the version
+names(gpkg_layers)[names(gpkg_layers) == "hectares"] <- hect_layer
+names(gpkg_layers)[names(gpkg_layers) == "camera_guides"] <- guide_layer
 # the deliverable: every layer in one GeoPackage at the top of outputs/
 gpkg_name <- sprintf("%s_%s.gpkg", site_name, design_version)
 gpkg <- file.path(out_dir, gpkg_name)
@@ -500,7 +582,7 @@ sub_cols[!nvis$eligible] <- adjustcolor(sub_cols[!nvis$eligible], alpha.f = 0.45
 # design colours
 col_v4 <- "#E41A1C"
 col_v5 <- "#377EB8"
-col_v6 <- "#000000"
+col_hect <- "#000000"
 col_track <- "#FF7F00"
 # write labels with a white halo so they read over imagery
 halo_text <- function(x, y, labels, cex = 0.7, col = "black", halo = "white", ...) {
@@ -530,7 +612,8 @@ par(mar = c(1, 1, 3, 1))
 # the subgroups, filled
 plot(st_geometry(nvis), col = sub_cols[as.character(nvis$mvs_code)], border = NA,
      xlim = map_box[c("xmin", "xmax")], ylim = map_box[c("ymin", "ymax")],
-     main = "Fletcherview: v4 grid, v5 relocated points and v6 hectares over NVIS subgroups")
+     main = sprintf("Fletcherview: v4 grid, v5 relocated points and %s hectares over NVIS subgroups",
+                    design_version))
 # the property boundary
 plot(st_geometry(boundary), border = "grey20", lwd = 1.5, add = TRUE)
 # mapped tracks
@@ -539,14 +622,15 @@ plot(st_geometry(track_lines), col = col_track, lwd = 1.5, add = TRUE)
 plot(st_geometry(v4_sites), pch = 4, col = col_v4, cex = 0.9, lwd = 1.5, add = TRUE)
 # v5 points
 plot(st_geometry(v5_points), pch = 2, col = col_v5, cex = 0.9, lwd = 1.5, add = TRUE)
-# v6 hectares, outlined, with a marker so they show at this scale
-plot(st_geometry(hectares), border = col_v6, lwd = 1.5, add = TRUE)
-points(cxy, pch = 22, cex = 1.6, lwd = 1.5, col = col_v6)
+# this design's hectares, outlined, with a marker so they show at this scale
+plot(st_geometry(hectares), border = col_hect, lwd = 1.5, add = TRUE)
+points(cxy, pch = 22, cex = 1.6, lwd = 1.5, col = col_hect)
 # their labels
 halo_text(cxy[, 1], cxy[, 2], hect_labels, pos = 4, offset = 0.8, cex = 0.75, font = 2)
-# the tower and A2O site
+# the tower
 plot(tower, pch = 17, col = "navy", cex = 1.3, add = TRUE)
-plot(a2o, pch = 8, col = "purple", cex = 1.2, add = TRUE)
+# and the A2O recorders
+plot(st_geometry(a2o_recorders), pch = 8, col = "purple", cex = 1.2, add = TRUE)
 ## the legend
 par(mar = c(1, 0, 3, 1))
 plot.new()
@@ -557,18 +641,20 @@ sub_labels <- vapply(sprintf("%d %s (%.2f km2)%s", nvis$mvs_code, nvis$mvs_name,
 legend("topleft", bty = "n", cex = 0.7, title = "NVIS subgroup", title.adj = 0,
        fill = sub_cols, border = NA, legend = sub_labels, y.intersp = 1.6)
 legend("bottomleft", bty = "n", cex = 0.8,
-       legend = c("v4 grid site (30 cameras)", "v5 relocated point", "v6 hectare (rank)",
-                  "Mapped track (OSM / QLD)", "Flux tower", "A2O site 61", "Cadastral parcel"),
+       legend = c("v4 grid site (30 cameras)", "v5 relocated point",
+                  paste(design_version, "hectare (rank)"), "Mapped track (OSM / QLD)",
+                  "Flux tower", "A2O site 61 recorder", "Cadastral parcel"),
        pch = c(4, 2, 22, NA, 17, 8, NA), lty = c(NA, NA, NA, 1, NA, NA, 1),
-       col = c(col_v4, col_v5, col_v6, col_track, "navy", "purple", "grey20"),
+       col = c(col_v4, col_v5, col_hect, col_track, "navy", "purple", "grey20"),
        lwd = c(1.5, 1.5, 1.5, 1.5, NA, NA, 1.5))
 layout(1)
 
-### Page 2: the v6 hectares over satellite imagery
+### Page 2: the hectares over satellite imagery
 par(mar = c(2, 1, 3, 1))
 # the imagery cropped to the map box
 plotRGB(img, ext = ext(map_box[c("xmin", "xmax", "ymin", "ymax")]), mar = c(2, 1, 3, 1),
-        main = "v6 hectares over Esri World Imagery (labels: ID (deployment rank))")
+        main = sprintf("%s hectares over Esri World Imagery (labels: ID (deployment rank))",
+                       design_version))
 # the property boundary
 plot(st_geometry(boundary), border = "white", lwd = 1.2, lty = 2, add = TRUE)
 # mapped tracks
@@ -581,7 +667,11 @@ halo_text(cxy[, 1], cxy[, 2], hect_labels, pos = 4, offset = 0.8, cex = 0.8, fon
           col = "black", halo = "yellow")
 # the tower
 plot(tower, pch = 17, col = "white", cex = 1.2, add = TRUE)
-mtext("Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community. Yellow: v6 hectares; orange: OSM/QLD tracks; cyan triangles: v5 points (interpreted tracks).",
+# the A2O recorders
+plot(st_geometry(a2o_recorders), pch = 8, col = "magenta", cex = 1.1, lwd = 1.5, add = TRUE)
+mtext(paste0("Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community. Yellow: ",
+             design_version, " hectares; orange: OSM/QLD tracks; cyan triangles: v5 points ",
+             "(interpreted tracks); magenta stars: A2O recorders."),
       side = 1, line = 0.5, cex = 0.65)
 
 ### Page 3: a close-up of each hectare, for checking tracks by eye
@@ -603,6 +693,8 @@ for (i in seq_len(n_panel)) {
   g <- guides[guides$hectare_id == hectares$hectare_id[i], ]
   plot(st_geometry(g), pch = ifelse(g$role == "on-track", 21, 1), bg = "yellow", col = "black",
        cex = 1.3, add = TRUE)
+  # A2O recorders nearby, drawn last so the guides never hide them
+  plot(st_geometry(a2o_recorders), pch = 8, col = "magenta", cex = 1.4, lwd = 2, add = TRUE)
   # a 100 m scale bar in the lower left
   segments(win[1] + 40, win[3] + 40, win[1] + 140, win[3] + 40, col = "white", lwd = 3)
   text(win[1] + 90, win[3] + 60, "100 m", col = "white", cex = 0.7)
@@ -617,8 +709,8 @@ plot_table_page(
               `Purity %` = round(100 * purity),
               `Centre lat` = sprintf("%.5f", centre_lat), `Centre long` = sprintf("%.5f", centre_lon),
               `To track (m)` = dist_track_m, Cameras = cameras, `Field note` = field_note),
-  title = sprintf("v6 hectares: %d hectares x %d cameras = %d of %d cameras (deploy in rank order)",
-                  n_hect, cameras_per_hectare, sum(hectares$cameras), camera_budget),
+  title = sprintf("%s hectares: %d hectares x %d cameras = %d of %d cameras (deploy in rank order)",
+                  design_version, n_hect, cameras_per_hectare, sum(hectares$cameras), camera_budget),
   footnote = paste(
     "Cameras within a hectare are not independent: place them in the field on features.",
     "Guide points (edge midpoints) are nominal starting points only. 'To track' is the gap",
@@ -629,19 +721,26 @@ plot_table_page(
   max_chars = 34)
 
 ### Page 5: the comparison of designs
+comparison_page <- comparison |>
+  # give every column a readable heading for the page
+  transmute(Subgroup = ifelse(is.na(mvs_code), subgroup, sprintf("%d %s", mvs_code, subgroup)),
+            `Area km2` = area_km2, `Area %` = area_pct, Stratum = stratum,
+            `v4 cameras` = v4_cameras, `v4 sites %` = v4_site_pct,
+            `v5 cameras` = v5_cameras, `v5 sites %` = v5_site_pct,
+            `this hectares` = this_hectares, `this cameras` = this_cameras,
+            `this sites %` = this_site_pct)
+# label this design's columns with its version
+names(comparison_page) <- sub("^this ", paste0(design_version, " "), names(comparison_page))
 plot_table_page(
-  comparison |>
-    transmute(Subgroup = ifelse(is.na(mvs_code), subgroup, sprintf("%d %s", mvs_code, subgroup)),
-              `Area km2` = area_km2, `Area %` = area_pct, Stratum = stratum,
-              `v4 cameras` = v4_cameras, `v4 sites %` = v4_site_pct,
-              `v5 cameras` = v5_cameras, `v5 sites %` = v5_site_pct,
-              `v6 hectares` = v6_hectares, `v6 cameras` = v6_cameras, `v6 sites %` = v6_site_pct),
-  title = "Share of sampled sites in each NVIS subgroup: v4 grid, v5 points, v6 hectares",
+  comparison_page,
+  title = sprintf("Share of sampled sites in each NVIS subgroup: v4 grid, v5 points, %s hectares",
+                  design_version),
   footnote = paste0(
     "MCP (minimum convex polygon) area: ",
     paste(sprintf("%s, %d cameras: %.2f km2", mcp$design, mcp$cameras, mcp$mcp_km2), collapse = "; "),
     ". v4 counts the 30 sites given cameras (footprint, main and the top backups). ",
-    "v6 site share counts hectares; each hectare holds ", cameras_per_hectare, " cameras."),
+    design_version, " site share counts hectares; each hectare holds ", cameras_per_hectare,
+    " cameras."),
   max_chars = 40)
 
 ### Page 6: distances between hectares
@@ -682,15 +781,17 @@ qgis_layers <- list(
                  label_field = "deployment_id", read_only = FALSE,
                  field_defaults = c(recorded_at = "now()"),
                  value_maps = list(hectare_id = hectares$hectare_id, guide_id = guides$guide_id)),
-  # the flux tower and the A2O site
+  # the flux tower and the A2O recorders, labelled by name
   qgis_layer_xml("flux_tower", "Flux tower", src("flux_tower"), crs_ll,
                  list(kind = "single", geom = "marker", shape = "triangle", size = 5,
                       fill = "#1F78B4", outline = "#FFFFFF")),
-  qgis_layer_xml("a2o_site", "A2O site 61", src("a2o_site"), crs_ll,
+  qgis_layer_xml("a2o_recorders", "A2O site 61 recorders", src("a2o_recorders"), crs_ll,
                  list(kind = "single", geom = "marker", shape = "star", size = 5,
-                      fill = "#6A3D9A", outline = "#FFFFFF")),
+                      fill = "#6A3D9A", outline = "#FFFFFF"),
+                 label_field = "name"),
   # guide points, labelled, filled on the on-track guide
-  qgis_layer_xml("v6_camera_guides", "v6 camera guides (nominal)", src("v6_camera_guides"), crs_ll,
+  qgis_layer_xml(guide_layer, paste(design_version, "camera guides (nominal)"), src(guide_layer),
+                 crs_ll,
                  list(kind = "categorized", attr = "role",
                       categories = data.frame(value = c("on-track", "off-track"),
                                               label = c("on-track guide", "off-track guide"),
@@ -698,7 +799,7 @@ qgis_layers <- list(
                                               shape = "circle", size = 3, outline_width = 0.4)),
                  label_field = "guide_id"),
   # the hectares, outlined and labelled with ID and rank
-  qgis_layer_xml("v6_hectares", "v6 hectares (ID (rank))", src("v6_hectares"), crs_ll,
+  qgis_layer_xml(hect_layer, paste(design_version, "hectares (ID (rank))"), src(hect_layer), crs_ll,
                  list(kind = "single", geom = "fill", fill = "#FFFF33", alpha = 60,
                       outline = "#000000", outline_width = 0.8),
                  geometry = "Polygon", label_field = "map_label"),

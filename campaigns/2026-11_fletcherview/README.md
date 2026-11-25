@@ -15,10 +15,10 @@ write, not in this file:
 - `outputs/design_summary_v4.csv` — scale, site counts by status, cameras for
   backups, MCP areas against the target, the FV04 move, extents (earlier designs have
   their own `design_summary_vN.csv`)
-- `outputs/design_summary_v6.csv`, `nvis_areas_v6.csv`, `design_comparison_v6.csv`,
-  `design_mcp_v6.csv`, `hectares_v6.csv` and `hectare_distances_v6.csv` — the v6
-  hectare design: parcel areas, subgroup areas, hectare purity and spacing, and the
-  comparison with v4 and v5
+- `outputs/design_summary_v7.csv`, `nvis_areas_v7.csv`, `design_comparison_v7.csv`,
+  `design_mcp_v7.csv`, `hectares_v7.csv` and `hectare_distances_v7.csv` — the current
+  hectare design: parcel areas, subgroup areas, hectare purity and spacing, the A2O
+  hectares, and the comparison with v4 and v5. The v6 tables are in `outputs/OLD/`.
 
 ## How to run
 
@@ -39,9 +39,11 @@ Rscript campaigns/2026-11_fletcherview/06_prepare_wimp_deployments.R  # after th
 nothing: the rows go to `sync_wimp_deployments()` in camDB's `code_monitor_crosswalk`,
 dry run first.
 
-The v6 scripts read every site-specific value from `v6_site_config.R`. To run the
-hectare design at another TERN SuperSite, copy that file and the two scripts into the
-new campaign and change the config.
+The hectare scripts (04 and 05) read every site-specific value from
+`v6_site_config.R`, which is named for the method introduced in v6; its
+`design_version` sets the version the outputs carry, now v7. To run the hectare design
+at another TERN SuperSite, copy that file and the two scripts into the new campaign and
+change the config.
 
 `02_water_and_basemap.R` reads the QTopo GeoPDFs with the command-line GDAL tools,
 because the GDAL bundled with the CRAN builds of sf and terra cannot read PDFs. On
@@ -161,9 +163,11 @@ the QTopo basemap with legends for camera status, every map layer and the marker
 
 v6 replaces the grid with 1 ha plots (100 × 100 m) stratified by vegetation. Within a
 plot the cameras are not independent: the plot, not the camera, is the sampling unit,
-and cameras go on features chosen in the field. The PDF `outputs/fletcherview_v6.pdf`
-holds the maps, a close-up of each hectare over satellite imagery, the hectare table
-and the comparison with v4 and v5. `outputs/qfield_v6/` is the matching QField project.
+and cameras go on features chosen in the field. v7 keeps every v6 rule and changes only
+the A2O hectares (see "Design v7" below). The PDF `outputs/fletcherview_v7.pdf` holds
+the maps, a close-up of each hectare over satellite imagery, the hectare table and the
+comparison with v4 and v5. `outputs/qfield_v7/` (zipped as `qfield_v7.zip`) is the
+matching QField project. The v6 PDF and QField project are in `outputs/OLD/`.
 
 **Caveat.** The state and national layers are coarse (NVIS is mapped on a 100 m grid)
 and the tracks are unverified. Confirm each hectare's vegetation subgroup and its
@@ -188,9 +192,9 @@ access on the ground before deploying.
 | Rule | Setting |
 |---|---|
 | Stratum | an NVIS subgroup covering at least 1 km² of the parcel; smaller subgroups are listed but not sampled |
-| Hectares per stratum | 2; the TERN core plot and the A2O hectare count towards their own subgroup |
+| Hectares per stratum | 2; the TERN core plot and the A2O hectares count towards their own subgroup |
 | Cameras | 30 in total; 4 per hectare if that fits, otherwise 3 |
-| Access | a track crosses every non-core hectare, so its edge is on the track and no part of it is more than about 140 m from it |
+| Access | a track crosses every hectare chosen by the rules, so its edge is on the track and no part of it is more than about 140 m from it; the fixed hectares (core plot and A2O) are exempt |
 | Purity | share of the hectare mapped as its subgroup; at least 75% where possible |
 | Spacing | replicates of one subgroup about 1 km apart |
 | Candidates | squares on a 25 m lattice, wholly inside the parcel, not overlapping another hectare |
@@ -207,8 +211,30 @@ thermal cues.
 `design_comparison_v6.csv` gives, for each NVIS subgroup, its share of the parcel
 against the cameras and the share of sampled sites in that subgroup under the v4 grid
 (the 30 sites given cameras), the v5 relocated points and the v6 hectares. The v4 and
-v5 rows include sites that fall off the cadastral parcel. `design_mcp_v6.csv` gives
+v5 rows include sites that fall off the cadastral parcel. `design_mcp_v7.csv` gives
 each design's minimum convex polygon.
+
+## Design v7: A2O hectares on the wet-season recorders
+
+v6 placed one A2O hectare on a point for A2O site 61 that turned out to sit on the
+station buildings (`v6_a2o_point_to_station_m` in `design_summary_v7.csv`). v7 places
+the A2O hectares on handheld GPS fixes of the site's four recorders
+(`data/raw/GPS_fletcher_values.csv`, rows with `point_type` "sensor"). The recorders
+are two wet–dry pairs, A and B. Cameras run through the wet season, so the two wet
+recorders each anchor a hectare:
+
+| Hectare | Recorder | Counts as |
+|---|---|---|
+| `A2O-A` | Acoustic wet A | the second replicate of its subgroup, with the core plot |
+| `A2O-B` | Acoustic wet B | the first replicate of its subgroup; the second is chosen by the v6 rules |
+
+The subgroups are in `hectares_v7.csv`. Each A2O hectare is the 100 m square that
+contains its recorder, chosen as in v6: crossed by a track if possible, then purest,
+then nearest a track. No track crosses either (`a2o_hectares_crossed_by_track` and
+`a2o_min_dist_track_m` in the design summary), so both are exempt from the access rule
+like the core plot, and their field note says to walk in on the route the A2O team uses
+to service the recorder. The four recorders are drawn on every map, labelled by name.
+The hectare count, cameras per hectare and camera budget are unchanged.
 
 ## Decisions log
 
@@ -306,7 +332,28 @@ card and the security key number become `key:value` tags in the crosswalk's form
 EpiCollect UUID leads the deployment notes so a WIMP record can be traced to its entry.
 Check counts are in `epicollect_qc_summary_v1.csv`.
 
+**2026-11-25 — v7: A2O hectares moved to the wet-season recorders (ZDA with Claude
+Code).** The A2O coordinates used in v6 were wrong: the point ZDA supplied fell on the
+station buildings, which is why that hectare looked odd. ZDA supplied
+GPS fixes of the four recorders taken on 23 July 2026 and asked for the A2O sampling to
+match the wet-season recorders. The two wet recorders are too far apart for one
+hectare, so ZDA chose one hectare on each (over one hectare on either recorder alone, or
+on all four recorders). Neither is near a mapped track or a v5 point, and ZDA chose to
+exempt them from the access rule with a field note rather than move them. The version
+bumps to v7 and the v6 outputs move to `outputs/OLD/`. The two A2O hectares are purer
+than the v6 A2O hectare, but the design's MCP is smaller and the subgroup-19 replicates
+are further apart than the target (`design_mcp_v7.csv`, `hectare_distances_v7.csv`).
+
 ## Open questions
+
+- **v7: A2O recorders sit on the hectare edge.** Each A2O square contains its recorder,
+  but the rule that picks the square (purity, then track distance) leaves both
+  recorders on an edge rather than central. Options: centre each square on its
+  recorder, or keep the rule.
+- **v7: replicate spacing.** The core plot and A2O-A, the two subgroup-19 hectares, are
+  well beyond the 1 km spacing target, and MVS09-B is placed against A2O-B
+  (`hectare_distances_v7.csv`). MVS09-B also sits next to a river channel on the
+  imagery; check its wet-season access with the other riverside hectares.
 
 - **FV03 gets a camera but sits inside the Burdekin channel.** Ranked by coverage,
   FV03 is backup B6, within the cameras available, although QTopo maps it inside the
@@ -317,16 +364,15 @@ Check counts are in `epicollect_qc_summary_v1.csv`.
   roughly 100–200 m there. The cadastral parcel is now fetched for v6
   (`04_fetch_v6_layers.R`); the v4 sites off it are counted in
   `design_comparison_v6.csv`. Rebuilding v4 on the parcel is not yet done.
-- **v6: water and the riverside hectares.** v6 has no water rule. One subgroup-9
-  hectare sits on the Burdekin bank and both tussock-grassland hectares sit beside
-  creek lines, because that subgroup follows the watercourses. Check wet-season access
-  before deploying them.
+- **v6/v7: water and the riverside hectares.** The hectare design has no water rule.
+  Both tussock-grassland hectares sit beside creek lines, because that subgroup follows
+  the watercourses. Check wet-season access before deploying them.
 - **EpiCollect: location ID format and deployment group.** The live form's example is
-  `FV12_20261125`, a v4 grid name plus date, while v6 cameras sit in hectares
-  (`MVS09-A`). The ID format, whether the script should check IDs against the v6
+  `FV12_20261125`, a v4 grid name plus date, while v7 cameras sit in hectares
+  (`MVS09-B`, `A2O-A`). The ID format, whether the script should check IDs against the v6
   design, and the WIMP group label (`Fletcherview_2026-11` for now) are to confirm
   before the first post.
-- **v6: spare cameras.** Options: a fifth camera in some hectares, or a seventh
+- **v6/v7: spare cameras.** Options: a fifth camera in some hectares, or a seventh
   hectare (for example in the cleared class, which falls just short of a stratum).
 
 ## Design notes from the v1 chat session

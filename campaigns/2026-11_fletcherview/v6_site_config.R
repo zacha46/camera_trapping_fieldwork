@@ -7,8 +7,8 @@
 ## 05_design_hectares.R both source it. To run the v6 method at another TERN
 ## SuperSite, copy this file into that campaign and change the values below.
 
-## design version stamped on every output file
-design_version <- "v6"
+## design version stamped on every output file and layer name
+design_version <- "v7"
 # short site name used in output file names
 site_name <- "fletcherview"
 # where this campaign lives
@@ -31,9 +31,11 @@ tower_lat <- -19.887232
 ## edge this far south of the tower, centred on the tower's easting
 core_plot_gap_south_m <- 10
 core_plot_is_placeholder <- TRUE # ZDA: confirm on the ground at deployment
-## Australian Acoustic Observatory site 61, given only to 3 dp on the A2O site page
-a2o_lon <- 146.178
-a2o_lat <- -19.883
+## Australian Acoustic Observatory (A2O) site 61: handheld GPS fixes of its recorders
+a2o_gps_path <- file.path(campaign_dir, "data", "raw", "GPS_fletcher_values.csv")
+### Which recorders anchor a hectare?
+## the wet-season pair, since cameras run Nov-Feb; each gets its own hectare (ZDA)
+a2o_anchor_titles <- c("Acoustic wet A", "Acoustic wet B")
 
 ### Vegetation layers
 ## NVIS 6.0 extant Major Vegetation Subgroups, 100 m grid, from the camDB curation folder
@@ -81,3 +83,4 @@ target_spacing_m <- 1000
 ### Earlier designs to compare against
 v4_gpkg_path <- file.path(campaign_dir, "outputs", "OLD", "qfield_v4", "fletcherview_design_v4.gpkg")
 v4_summary_path <- file.path(campaign_dir, "outputs", "OLD", "design_summary_v4.csv")
+v6_gpkg_path <- file.path(campaign_dir, "outputs", "OLD", "fletcherview_v6.gpkg")

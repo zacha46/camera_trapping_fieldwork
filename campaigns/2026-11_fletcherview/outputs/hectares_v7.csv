@@ -1,0 +1,7 @@
+"rank","hectare_id","mvs_code","subgroup","purity_pct","cameras","dist_tower_m","dist_track_m","track_source","dist_replicate_m"
+1,"CORE",19,"Eucalyptus low open woodlands with tussock grass",100,4,60,3,"v5_point_proxy (FV27)",2287
+2,"A2O-B",9,"Eucalyptus woodlands with a tussock grass understorey",96,4,1393,236,"v5_point_proxy (FV11)",1340
+3,"A2O-A",19,"Eucalyptus low open woodlands with tussock grass",100,4,2250,180,"v5_point_proxy (FV16)",2287
+4,"MVS09-B",9,"Eucalyptus woodlands with a tussock grass understorey",100,4,2561,0,"v5_point_proxy (FV04)",1340
+5,"MVS37-A",37,"Other tussock grasslands",100,4,2943,0,"v5_point_proxy (FV15)",950
+6,"MVS37-B",37,"Other tussock grasslands",100,4,3893,0,"v5_point_proxy (FV02)",950
