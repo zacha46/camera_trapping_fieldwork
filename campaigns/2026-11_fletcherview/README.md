@@ -31,7 +31,13 @@ Rscript campaigns/2026-11_fletcherview/02_water_and_basemap.R   # needs internet
 Rscript campaigns/2026-11_fletcherview/03_design_grid.R
 Rscript campaigns/2026-11_fletcherview/04_fetch_v6_layers.R  # needs internet
 Rscript campaigns/2026-11_fletcherview/05_design_hectares.R
+Rscript campaigns/2026-11_fletcherview/06_prepare_wimp_deployments.R  # after the field days
 ```
+
+`06_prepare_wimp_deployments.R` reads the EpiCollect deployment export from
+`data/raw/epicollect/` and writes WIMP upload rows to `data/processed/`. It posts
+nothing: the rows go to `sync_wimp_deployments()` in camDB's `code_monitor_crosswalk`,
+dry run first.
 
 The v6 scripts read every site-specific value from `v6_site_config.R`. To run the
 hectare design at another TERN SuperSite, copy that file and the two scripts into the
@@ -287,6 +293,19 @@ because the A2O site sits beside cleared ground around the station buildings. Th
 cameras left over after the hectares are not yet assigned (`cameras_spare` in
 `design_summary_v6.csv`).
 
+**2026-11-25 — EpiCollect export to WIMP rows (ZDA with Claude Code).** A test entry
+from the live form was converted with `06_prepare_wimp_deployments.R` and passed
+offline through the camDB body builder with no unmapped columns. The location ID is
+the key: the live form no longer asks for a deployment ID, and WIMP's sync matches on
+location name, so each ID must be unique within the campaign. Start times are AEST
+wall-clock in the form and are converted to UTC with `utcOffset` UTC+10, because the
+WIMP post sends the time as given. Feature and bait drop-downs are translated to the
+Camtrap DP and WIMP labels the camDB crosswalk uses. Mineral lick has no WIMP bait
+label, so it goes in as Other Bait with a `baitTypeOther` tag. Camera settings, the SD
+card and the security key number become `key:value` tags in the crosswalk's format. The
+EpiCollect UUID leads the deployment notes so a WIMP record can be traced to its entry.
+Check counts are in `epicollect_qc_summary_v1.csv`.
+
 ## Open questions
 
 - **FV03 gets a camera but sits inside the Burdekin channel.** Ranked by coverage,
@@ -302,6 +321,11 @@ cameras left over after the hectares are not yet assigned (`cameras_spare` in
   hectare sits on the Burdekin bank and both tussock-grassland hectares sit beside
   creek lines, because that subgroup follows the watercourses. Check wet-season access
   before deploying them.
+- **EpiCollect: location ID format and deployment group.** The live form's example is
+  `FV12_20261125`, a v4 grid name plus date, while v6 cameras sit in hectares
+  (`MVS09-A`). The ID format, whether the script should check IDs against the v6
+  design, and the WIMP group label (`Fletcherview_2026-11` for now) are to confirm
+  before the first post.
 - **v6: spare cameras.** Options: a fifth camera in some hectares, or a seventh
   hectare (for example in the cleared class, which falls just short of a stratum).
 

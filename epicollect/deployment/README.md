@@ -31,6 +31,23 @@ and `cameraDepth` are deliberately left out: the first comes from the GPS fix, t
 second applies only to underwater cameras. Campaign-specific variants (for example a
 drop-down of grid point IDs instead of free text) live in that campaign's folder.
 
+## The live form has moved on from this JSON
+
+The Fletcherview project's form was edited in the web formbuilder after this file was
+written: the deployment id question is gone (location id is now the key), and camera
+model and serial number are optional. Export the live form (Formbuilder → Export form)
+and commit it as the next version before reusing this file elsewhere.
+
+## Getting the records into the WildObs image platform
+
+`R/epicollect_deployments_to_wimp.R` reads the CSV export (Data → Download → CSV) and
+returns the 25-column WIMP bulk-upload rows that camDB's `sync_wimp_deployments()`
+posts. It converts the AEST start time to UTC, translates the feature and bait
+drop-downs, packs camera settings into `key:value` tags, and stops on a missing GPS
+fix or a repeated location ID. A campaign script calls it and writes the rows; see
+`campaigns/2026-11_fletcherview/06_prepare_wimp_deployments.R`. Exports carry camera
+coordinates, so keep them in the campaign's `data/raw/`, which git ignores.
+
 ## EpiCollect rules that are easy to break when editing the JSON by hand
 
 - **Location, photo, audio and video questions cannot be required.** The formbuilder

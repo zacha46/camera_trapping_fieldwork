@@ -80,3 +80,7 @@ campaigns/*/outputs/*points*.csv
 campaigns/*/data/processed/*.gpkg
 # dont need old outputs
 campaigns/*/outputs/OLD/*
+# EpiCollect exports and the deployment tables built from them carry camera
+# coordinates, so they stay local: raw exports belong in campaigns/*/data/raw/
+epicollect/**/*.csv
+campaigns/*/data/processed/*deployments*.csv
